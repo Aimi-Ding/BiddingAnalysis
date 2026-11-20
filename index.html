@@ -454,13 +454,13 @@ connect-src 'self' https://push2dycalc.eastmoney.com;
     <div class="snap-row">复盘 <b id="revDays">0</b> 天 · 最新 <span id="revLast">—</span> · 成功率 <b id="revRate">—</b></div>
     <div class="snap-row">状态：<span id="revState" class="snap-state-off">等待收盘</span></div>
     <div class="snap-btns">
-        <button class="snap-btn primary" id="snapNowBtn">立即抓取</button>
+        <button class="snap-btn primary" id="snapNowBtn">记录此刻</button>
         <button class="snap-btn" id="snapViewBtn">查看数据</button>
         <button class="snap-btn" id="revViewBtn">复盘</button>
         <button class="snap-btn" id="snapExportBtn">导出</button>
         <button class="snap-btn danger" id="snapClearBtn">清空</button>
     </div>
-    <div class="snap-hint" id="snapHint">9:25:30 自动抓主页数据；收盘 15:00 后自动复盘</div>
+    <div class="snap-hint" id="snapHint">9:25:30 自动记录页面数据；收盘 15:00 后自动复盘</div>
 </div>
 
 <!-- 快照明细 -->
@@ -841,10 +841,9 @@ function renderTable(){
     html += `</tbody></table>`;
     wrap.innerHTML = html;
 }
-async function fetchBotPanel(force){
+async function fetchBotPanel(){
     const wrap = document.getElementById('top10TableArea');
-    // force=true 时忽略缓存重新拉取（快照记录需要拿到当前时刻的数据）
-    if(isDataCachedBot && !force){ renderTable();return; }
+    if(isDataCachedBot){ renderTable();return; }
     wrap.innerHTML = `<div class="loading-placeholder"><div class="spinner"></div><div>选股加载中...</div></div>`;
     try{
         const res = await fetch(STOCK_API);
@@ -1048,15 +1047,11 @@ async function snapCapture(manual) {
             if (manual) showToast('今天已记录', 'info');
             return;
         }
-        setText('snapState', '抓取中…', 'warn');
-
-        // 重新拉一次，保证存下来的就是页面上此刻显示的内容
-        await fetchTopPanel();
-        await fetchBotPanel(true);
-
+        // 不做任何额外请求：直接存页面此刻显示的内容。
+        // 页面自己加载时已经拉过一次行情，这里就用那份数据。
         if (!cachedTop3.length && !cachedTopList.length) {
-            setText('snapState', '没有拿到数据', 'warn');
-            if (manual) showToast('没有拿到数据，请稍后再试', 'error');
+            setText('snapState', '页面还没有数据', 'warn');
+            if (manual) showToast('页面还没加载出数据，请稍后再试', 'error');
             return;
         }
 
