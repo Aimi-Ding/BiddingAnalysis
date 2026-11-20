@@ -1275,6 +1275,12 @@ async function snapShowData() {
     const foot = document.getElementById('snapModalFoot');
     if (!modal) return;
     modal.classList.add('open');
+    // 每次打开都回到日期列表
+    const dv = document.getElementById('snapDayView');
+    const lv = document.getElementById('snapListView');
+    if (dv) dv.style.display = 'none';
+    if (lv) lv.style.display = 'flex';
+    snapDayRec = null;
     list.innerHTML = '<div style="padding:20px;color:#8b96ab">读取中…</div>';
     sub.textContent = '—';
     foot.textContent = '';
@@ -1290,6 +1296,7 @@ async function snapShowData() {
         const qDays = all.filter(x => x.q === 1).length;
         sub.textContent = `共 ${all.length} 个交易日：${qDays} 天含竞价量（可用于量能因子回测），`
             + `${all.length - qDays} 天仅竞价涨幅准确`;
+
 
         let html = '<table><thead><tr>'
             + '<th>日期</th><th>抓取时间</th><th>类型</th><th>记录条数</th><th>竞价上涨</th><th>最高竞价涨幅</th>'
