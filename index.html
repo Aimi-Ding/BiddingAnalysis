@@ -951,7 +951,9 @@ const REVIEW_API = 'https://push2dycalc.eastmoney.com/api/qt/clist/get'
 
 function idbOpen() {
     return new Promise((resolve, reject) => {
-        const req = indexedDB.open(SNAP_DB, 1);
+        // 版本号必须是 2：早期版本曾升到 2（增加 reviews 表），
+        // 如果再用 1 打开会报 "requested version (1) is less than existing version (2)"。
+        const req = indexedDB.open(SNAP_DB, 2);
         req.onupgradeneeded = () => {
             const db = req.result;
             if (!db.objectStoreNames.contains(SNAP_STORE)) db.createObjectStore(SNAP_STORE, { keyPath: 'date' });
@@ -1272,9 +1274,11 @@ async function snapOpenDay(date) {
         else {
             html += '<table><thead><tr><th>#</th><th>代码</th><th>名称</th><th>竞价涨幅</th><th>涨停率</th><th>可信度</th></tr></thead><tbody>';
             for (const x of L) {
+                const pv = (x.prob !== undefined ? x.prob : (x.score !== undefined ? x.score : null));
+                const cv = (x.conf !== undefined ? x.conf : (x.cov !== undefined ? x.cov : null));
                 html += `<tr><td>${x.rank}</td><td>${x.code}</td><td>${x.name || '—'}</td>`
-                    + `<td>${x.bid > 0 ? '+' : ''}${Number(x.bid).toFixed(2)}%</td>`
-                    + `<td>${x.prob}%</td><td>${x.conf}%</td></tr>`;
+                    + `<td>${Number(x.bid) > 0 ? '+' : ''}${Number(x.bid).toFixed(2)}%</td>`
+                    + `<td>${pv !== null ? pv + '%' : '—'}</td><td>${cv !== null ? cv + '%' : '—'}</td></tr>`;
             }
             html += '</tbody></table>';
         }
@@ -1285,11 +1289,16 @@ async function snapOpenDay(date) {
         else {
             html += '<table><thead><tr><th>#</th><th>代码</th><th>名称</th><th>竞价涨幅</th><th>实时涨幅</th><th>涨速</th><th>涨停率</th><th>可信度</th><th>行业</th></tr></thead><tbody>';
             for (const x of R) {
+                const pv = (x.prob !== undefined ? x.prob : (x.score !== undefined ? x.score : null));
+                const cv = (x.conf !== undefined ? x.conf : (x.cov !== undefined ? x.cov : null));
+                const rl = (x.real !== undefined && x.real !== null) ? Number(x.real) : null;
+                const sp = (x.speed !== undefined && x.speed !== null) ? Number(x.speed) : null;
                 html += `<tr><td>${x.rank}</td><td>${x.code}</td><td>${x.name || '—'}</td>`
-                    + `<td>${x.bid > 0 ? '+' : ''}${Number(x.bid).toFixed(2)}%</td>`
-                    + `<td>${Number(x.real) > 0 ? '+' : ''}${Number(x.real).toFixed(2)}%</td>`
-                    + `<td>${Number(x.speed).toFixed(2)}</td>`
-                    + `<td>${x.prob}%</td><td>${x.conf}%</td><td>${x.ind || '—'}</td></tr>`;
+                    + `<td>${Number(x.bid) > 0 ? '+' : ''}${Number(x.bid).toFixed(2)}%</td>`
+                    + `<td>${rl === null ? '—' : (rl > 0 ? '+' : '') + rl.toFixed(2) + '%'}</td>`
+                    + `<td>${sp === null ? '—' : sp.toFixed(2)}</td>`
+                    + `<td>${pv !== null ? pv + '%' : '—'}</td><td>${cv !== null ? cv + '%' : '—'}</td>`
+                    + `<td>${x.ind || '—'}</td></tr>`;
             }
             html += '</tbody></table>';
         }
