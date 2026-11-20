@@ -9,3 +9,8 @@
 # 运行时产生的临时文件
 *.log
 node_modules/
+
+# 回测数据（几十到上百 MB，可由 fetch_daily.py 重新生成，不入库）
+backtest/data/
+__pycache__/
+*.pyc
