@@ -491,6 +491,7 @@
         .rev-stats { font-size: 12px; color: #97a3ba; line-height: 1.7; }
         .rev-stats b { color: #eaf0ff; }
         .rev-legend { font-size: 11px; }
+
     </style>
 </head>
 <body>
@@ -801,8 +802,10 @@ function computeScoreTop(stock) {
 function isEligibleTop(stock) {
     const name = String(stock.f14 || '');
     if (name.includes('ST')) return false;
-    if (num(stock.f4) <= 0 || num(stock.f5) === 0) return false;
-    // 【修复②】「剔除昨日涨停」改为读东财自带的概念标签，原来那条比较永远不会成立。
+    // 【修复⑥】原判断是 num(stock.f4) <= 0 —— f4 是「今日涨跌额」，盘中是实时值，
+    // 竞价高开但盘中回落的股票会被误剔（实测100只里误剔59只）。
+    // 竞价选股应当看「竞价涨幅」，改用 f615 > 0，9:25 与盘中口径一致。
+    if (getBidChange(stock) <= 0 || num(stock.f5) === 0) return false;
     if (isYesterdayLimitUp(stock)) return false;
     if (getBidChange(stock) >= 7) return false;
     return true;
@@ -945,8 +948,8 @@ function computeScoreBot(stock) {
 function isEligibleBot(stock){
     const name = String(stock.f14 || '');
     if (name.includes('ST')) return false;
-    if (num(stock.f4) <= 0 || num(stock.f5) === 0) return false;
-    // 【修复②】同左侧，改为读东财概念标签判断昨日涨停
+    // 同上：改用竞价涨幅判断，避免盘中用实时涨跌额导致误剔
+    if (getBidChange(stock) <= 0 || num(stock.f5) === 0) return false;
     if (isYesterdayLimitUp(stock)) return false;
     if (getBidChange(stock) >= 9.5) return false;
     return true;
@@ -1347,10 +1350,10 @@ async function reviewCapture(manual) {
 
         // 【核心】复盘对象必须和主页那一版完全一致，所以优先读当天的快照。
         // 快照存的就是 9:25:30 那一刻主页显示的左侧榜 + 右侧榜。
+        // 复盘对象 = 主页那一版，只取快照里记的股票，不做任何额外取数。
         const snapRec = await idbGet(dk, SNAP_STORE);
         const targets = [];
         const seen = new Set();
-        let sourceLabel = '';
         if (snapRec && (snapRec.left || snapRec.right)) {
             for (const x of [...(snapRec.left || []), ...(snapRec.right || [])]) {
                 if (x && x.code && !seen.has(x.code)) {
@@ -1358,7 +1361,9 @@ async function reviewCapture(manual) {
                     targets.push({ code: x.code, name: x.name || '', bid: x.bid });
                 }
             }
-            sourceLabel = `主页快照（${snapRec.t || ''}）`;
+        }
+        if (!targets.length) {
+            throw new Error('当天没有快照记录，无法复盘（需在 9:25:30 前打开页面）');
         }
 
         const res = await fetch(REVIEW_API);
@@ -1368,55 +1373,27 @@ async function reviewCapture(manual) {
         const total = Number(json.data.total) || 0;
         if (total < 3000) throw new Error('全市场数据不足，可能非交易日');
 
-        // 建立 代码 → 行情 索引
         const quote = new Map();
-        for (const x of json.data.diff) {
-            quote.set(String(x.f12 || ''), x);
-        }
+        for (const x of json.data.diff) quote.set(String(x.f12 || ''), x);
 
         const items = [];
         let missing = 0;
-
-        if (targets.length) {
-            // 按快照里的股票逐只取行情
-            for (const t of targets) {
-                const q = quote.get(t.code);
-                if (!q) { missing++; continue; }
-                const open = Number(q.f17);
-                const close = Number(q.f2);
-                if (!(open > 0) || !(close > 0)) { missing++; continue; }
-                items.push({
-                    code: t.code,
-                    name: t.name || String(q.f14 || ''),
-                    bid: +Number(q.f615 || t.bid || 0).toFixed(2),
-                    open: +open.toFixed(2),
-                    close: +close.toFixed(2),
-                    ret: +((close / open - 1) * 100).toFixed(2),
-                });
-            }
-            if (!items.length) throw new Error('快照里的股票都没匹配到行情');
-        } else {
-            // 没有快照记录（当天没开页面），退回用竞价涨幅前 100
-            for (const x of json.data.diff) {
-                const code = String(x.f12 || '');
-                const bid = Number(x.f615);
-                const open = Number(x.f17);
-                const close = Number(x.f2);
-                if (!code || !Number.isFinite(bid)) continue;
-                if (!(open > 0) || !(close > 0)) continue;
-                items.push({
-                    code, name: String(x.f14 || ''),
-                    bid: +bid.toFixed(2),
-                    open: +open.toFixed(2),
-                    close: +close.toFixed(2),
-                    ret: +((close / open - 1) * 100).toFixed(2),
-                });
-                if (items.length >= 100) break;
-            }
-            sourceLabel = '竞价涨幅前100（当天无快照）';
+        for (const t of targets) {
+            const q = quote.get(t.code);
+            if (!q) { missing++; continue; }
+            const open = Number(q.f17);
+            const close = Number(q.f2);
+            if (!(open > 0) || !(close > 0)) { missing++; continue; }
+            items.push({
+                code: t.code,
+                name: t.name || String(q.f14 || ''),
+                bid: +Number(q.f615 || t.bid || 0).toFixed(2),
+                open: +open.toFixed(2),
+                close: +close.toFixed(2),
+                ret: +((close / open - 1) * 100).toFixed(2),
+            });
         }
-
-        if (!items.length) throw new Error('没有可复盘的股票');
+        if (!items.length) throw new Error('快照里的股票都没匹配到行情');
 
         const up = items.filter(x => x.ret > 0).length;
         const flat = items.filter(x => x.ret === 0).length;
@@ -1427,7 +1404,7 @@ async function reviewCapture(manual) {
             date: dk,
             t: snapClock(dt),
             afterClose: dt.getHours() >= 15,
-            source: sourceLabel,
+            snapTime: snapRec ? snapRec.t : '',
             missing,
             n: items.length,
             up, down, flat, rate,
@@ -1553,14 +1530,14 @@ function revRender(idx) {
     let cls = 'rev-rate-big';
     if (rec.rate < 40) cls += ' low';
     else if (rec.rate < 60) cls += ' mid';
-
     const missTxt = rec.missing ? `　${rec.missing} 只无行情` : '';
+
     summary.innerHTML = `<div class="${cls}">${rec.rate}%</div>
         <div class="rev-stats">
             <div>成功率（收盘价 > 开盘价）</div>
             <div><b class="snap-up">涨 ${rec.up}</b>　<b class="snap-down">跌 ${rec.down}</b>　平 ${rec.flat}　共 ${rec.n} 只${missTxt}</div>
             <div>平均收益 <b>${rec.avgRet > 0 ? '+' : ''}${rec.avgRet}%</b></div>
-            <div style="color:#6b7688">复盘对象：${rec.source || '竞价前100'}</div>
+            <div style="color:#6b7688">复盘对象：主页快照${rec.snapTime ? '（' + rec.snapTime + '）' : ''}</div>
         </div>`;
 
     const items = rec.items || [];
