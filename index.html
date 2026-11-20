@@ -372,9 +372,64 @@
         .count-select:focus {
             box-shadow: 0 0 0 1px #ff5c5c;
         }
+
+        /* ===== 竞价快照记录器（为回测积累数据） ===== */
+        .snap-panel {
+            position: fixed;
+            right: 14px;
+            bottom: 14px;
+            z-index: 9999;
+            background: rgba(18, 22, 32, 0.94);
+            border: 1px solid #3a4356;
+            border-radius: 12px;
+            padding: 10px 12px;
+            font-size: 12px;
+            color: #c8d2e6;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 6px 24px rgba(0,0,0,0.45);
+            max-width: 330px;
+        }
+        .snap-panel .snap-title {
+            font-weight: 700;
+            color: #eef2ff;
+            margin-bottom: 6px;
+        }
+        .snap-panel .snap-row { margin: 3px 0; color: #97a3ba; }
+        .snap-panel .snap-row b { color: #eaf0ff; font-weight: 600; }
+        .snap-panel .snap-state-ok { color: #4ade80; }
+        .snap-panel .snap-state-warn { color: #fbbf24; }
+        .snap-panel .snap-state-off { color: #7b8699; }
+        .snap-btns { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+        .snap-btn {
+            background: rgba(255,255,255,0.06);
+            border: 1px solid #4a5568;
+            color: #d8e0f0;
+            border-radius: 7px;
+            padding: 3px 9px;
+            font-size: 11px;
+            cursor: pointer;
+        }
+        .snap-btn:hover { background: rgba(255,255,255,0.12); }
+        .snap-btn.primary { border-color: #4ade80; color: #bbf7d0; }
+        .snap-btn.danger { border-color: #f87171; color: #fecaca; }
+        .snap-hint { margin-top: 6px; font-size: 11px; color: #6b7688; line-height: 1.4; }
     </style>
 </head>
 <body>
+<!-- 竞价快照记录器：每天 9:25-9:29 自动抓一次，为回测积累真实数据 -->
+<div class="snap-panel" id="snapPanel">
+    <div class="snap-title"><i class="fa fa-database"></i> 快照积累（回测用）</div>
+    <div class="snap-row">已记录 <b id="snapDays">0</b> 个交易日</div>
+    <div class="snap-row">最新：<span id="snapLast">—</span></div>
+    <div class="snap-row">状态：<span id="snapState" class="snap-state-off">等待 9:25</span></div>
+    <div class="snap-btns">
+        <button class="snap-btn primary" id="snapNowBtn">立即抓取</button>
+        <button class="snap-btn" id="snapExportBtn">导出</button>
+        <button class="snap-btn danger" id="snapClearBtn">清空</button>
+    </div>
+    <div class="snap-hint" id="snapHint">9:25–9:30 自动抓取（此时含竞价量）；其余时间只能补抓竞价涨幅</div>
+</div>
+
 <div class="container-main">
     <!-- 左侧面板：原1.html -->
     <div class="panel-left">
@@ -900,6 +955,251 @@ window.addEventListener('DOMContentLoaded',async ()=>{
 
     updateAllTime();
     setInterval(updateAllTime,1000);
+});
+
+// ===================== 竞价快照记录器（为回测积累真实数据） =====================
+// 两个关键设计：
+// 1. 用全市场接口（pz=6000），不能复用 STOCK_API —— 那个只取涨幅前 100 只，
+//    样本太小，存下来无法用于回测。
+// 2. 用 IndexedDB 而不是 localStorage —— 全市场每天约 2500 条，
+//    localStorage 只能存两个月就满，IndexedDB 能存几年。
+//
+// 准点抓（q=1）和补抓（q=0）必须区分：竞价成交量 f5 只在 9:25–9:30 等于竞价量，
+// 一开盘就变成全天成交量，事后再抓就只有竞价涨幅是准的。
+const SNAP_API = 'https://push2dycalc.eastmoney.com/api/qt/clist/get'
+    + '?fs=m:1+t:2,m:1+t:23,m:0+t:6,m:0+t:80'
+    + '&fltt=2&invt=2&fields=f5,f12,f14,f17,f18,f615'
+    + '&fid=f3&po=1&pn=1&pz=6000&np=1';
+
+const SNAP_DB = 'auction_snapshots';
+const SNAP_STORE = 'days';
+
+function idbOpen() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open(SNAP_DB, 1);
+        req.onupgradeneeded = () => {
+            const db = req.result;
+            if (!db.objectStoreNames.contains(SNAP_STORE)) {
+                db.createObjectStore(SNAP_STORE, { keyPath: 'date' });
+            }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error || new Error('IndexedDB 打开失败'));
+    });
+}
+async function idbPut(rec) {
+    const db = await idbOpen();
+    await new Promise((resolve, reject) => {
+        const tx = db.transaction(SNAP_STORE, 'readwrite');
+        tx.objectStore(SNAP_STORE).put(rec);
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+}
+async function idbAll() {
+    const db = await idbOpen();
+    const out = await new Promise((resolve, reject) => {
+        const tx = db.transaction(SNAP_STORE, 'readonly');
+        const req = tx.objectStore(SNAP_STORE).getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error);
+    });
+    db.close();
+    return out;
+}
+async function idbGet(date) {
+    const db = await idbOpen();
+    const out = await new Promise((resolve, reject) => {
+        const tx = db.transaction(SNAP_STORE, 'readonly');
+        const req = tx.objectStore(SNAP_STORE).get(date);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+    });
+    db.close();
+    return out;
+}
+async function idbClear() {
+    const db = await idbOpen();
+    await new Promise((resolve, reject) => {
+        const tx = db.transaction(SNAP_STORE, 'readwrite');
+        tx.objectStore(SNAP_STORE).clear();
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+}
+
+function snapNow() {
+    const now = new Date();
+    return new Date(now.getTime() + 8*3600*1000 + now.getTimezoneOffset()*60000);
+}
+function snapDateKey(dt) {
+    return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+}
+function snapClock(dt) {
+    return `${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}:${String(dt.getSeconds()).padStart(2,'0')}`;
+}
+function snapInWindow(dt) {
+    return dt.getHours() === 9 && dt.getMinutes() >= 25 && dt.getMinutes() < 30;
+}
+function snapIsWeekday(dt) {
+    const w = dt.getDay();
+    return w >= 1 && w <= 5;
+}
+
+function snapSetUi(msg, cls) {
+    const sEl = document.getElementById('snapState');
+    if (!sEl) return;
+    if (msg) { sEl.textContent = msg; sEl.className = 'snap-state-' + (cls || 'off'); }
+}
+async function snapRefreshStats() {
+    const dEl = document.getElementById('snapDays');
+    const lEl = document.getElementById('snapLast');
+    const hEl = document.getElementById('snapHint');
+    if (!dEl) return;
+    try {
+        const all = await idbAll();
+        all.sort((a, b) => (a.date < b.date ? -1 : 1));
+        dEl.textContent = all.length;
+        lEl.textContent = all.length ? all[all.length - 1].date : '—';
+        const qDays = all.filter(x => x.q === 1).length;
+        const rows = all.reduce((acc, x) => acc + (x.n || 0), 0);
+        if (hEl) hEl.textContent = `含竞价量 ${qDays} 天｜共 ${rows} 条｜存于 IndexedDB`;
+    } catch (e) { /* 忽略 */ }
+}
+
+let snapBusy = false;
+async function snapCapture(manual) {
+    if (snapBusy) return;
+    snapBusy = true;
+    const dt = snapNow();
+    const dk = snapDateKey(dt);
+    const inWin = snapInWindow(dt);
+
+    try {
+        const exist = await idbGet(dk);
+        if (exist) {
+            snapSetUi(`今天已记录（${exist.t}）`, 'ok');
+            if (manual) showToast('今天已记录，无需重复', 'info');
+            return;
+        }
+
+        snapSetUi('抓取中…', 'warn');
+        const res = await fetch(SNAP_API);
+        const json = await res.json();
+        if (json.rc !== 0 || !json.data?.diff) throw new Error('数据异常 rc=' + json.rc);
+
+        // 存「全市场」而不是只存竞价上涨的：回测需要对照池（含低开），
+        // 而且竞价量 f5 是日线数据里没有的，只有这里是唯一来源。
+        // 每行：[代码, 竞价涨幅%, 竞价量(手), 昨收, 竞价成交价]
+        const rows = [];
+        for (const s of json.data.diff) {
+            const name = String(s.f14 || '');
+            if (name.includes('ST')) continue;
+            const bid = Number(s.f615);
+            if (!Number.isFinite(bid)) continue;          // 无竞价数据
+            // f17 是今开价（= 集合竞价成交价），f18 是昨收；
+            // 注意不能用 f2，那是实时最新价，盘中一直在变。
+            const prev = Number(s.f18), open = Number(s.f17), vol = Number(s.f5);
+            if (!(prev > 0) || !(vol > 0) || !(open > 0)) continue;   // 停牌/无成交
+
+            const code = String(s.f12 || '');
+            let lim = 10;
+            if (/^(300|301|688|689)/.test(code)) lim = 20;
+            else if (/^[48]/.test(code)) lim = 30;
+            if (bid >= lim - 0.2 || bid <= -lim + 0.2) continue;      // 一字涨跌停，无实际成交
+
+            rows.push([code, +bid.toFixed(2), Math.round(vol), +prev.toFixed(2), +open.toFixed(2)]);
+        }
+
+        // 是否交易日：全市场总条数够多才算，避免把节假日残留存进来
+        const total = Number(json.data.total) || 0;
+        if (total < 3000 || rows.length < 500) {
+            snapSetUi(`样本仅 ${rows.length} 只（全市场 ${total}），疑似非交易日`, 'warn');
+            if (manual) showToast(`样本不足（${rows.length} 只），未保存`, 'error');
+            return;
+        }
+
+        await idbPut({ date: dk, t: snapClock(dt), q: inWin ? 1 : 0, n: rows.length, rows });
+        snapSetUi(inWin ? `已记录 ${rows.length} 只（含竞价量）` : `已补抓 ${rows.length} 只（量不准）`, 'ok');
+        if (manual) showToast(`快照已记录 ${rows.length} 只`, 'success');
+        await snapRefreshStats();
+    } catch (e) {
+        snapSetUi('抓取失败：' + ((e && e.message) || e), 'warn');
+        if (manual) showToast('抓取失败：' + ((e && e.message) || e), 'error');
+    } finally {
+        snapBusy = false;
+    }
+}
+
+async function snapExport() {
+    try {
+        const all = await idbAll();
+        if (!all.length) { showToast('还没有数据', 'error'); return; }
+        all.sort((a, b) => (a.date < b.date ? -1 : 1));
+        const payload = { v: 1, exported_at: new Date().toISOString(), days: all };
+        const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `auction-snapshots-${snapDateKey(snapNow())}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+        showToast(`已导出 ${all.length} 个交易日`, 'success');
+    } catch (e) {
+        showToast('导出失败：' + ((e && e.message) || e), 'error');
+    }
+}
+
+async function snapClear() {
+    try {
+        const all = await idbAll();
+        if (!all.length) { showToast('没有可清的数据', 'info'); return; }
+        if (!confirm(`确定清空 ${all.length} 个交易日的快照？请先导出备份。`)) return;
+        await idbClear();
+        snapSetUi('已清空', 'off');
+        await snapRefreshStats();
+        showToast('已清空', 'info');
+    } catch (e) {
+        showToast('清空失败：' + ((e && e.message) || e), 'error');
+    }
+}
+
+async function snapTick() {
+    const dt = snapNow();
+    const dk = snapDateKey(dt);
+    if (!snapIsWeekday(dt)) { snapSetUi('周末休市', 'off'); return; }
+    let has = null;
+    try { has = await idbGet(dk); } catch (e) { /* 忽略 */ }
+
+    if (snapInWindow(dt)) {
+        if (!has) { await snapCapture(false); return; }
+        snapSetUi('今天已记录（含竞价量）', 'ok');
+        return;
+    }
+    if (has) {
+        snapSetUi(has.q ? '今天已记录（含竞价量）' : '今天已补抓（量不准）', 'ok');
+        return;
+    }
+    const h = dt.getHours(), m = dt.getMinutes();
+    if (h < 9 || (h === 9 && m < 25)) snapSetUi('等待 9:25 自动抓取', 'off');
+    else if (h < 15) snapSetUi('已过竞价时段，可手动补抓涨幅', 'warn');
+    else snapSetUi('今日未记录', 'off');
+}
+
+window.addEventListener('DOMContentLoaded', async () => {
+    const nowBtn = document.getElementById('snapNowBtn');
+    const expBtn = document.getElementById('snapExportBtn');
+    const clrBtn = document.getElementById('snapClearBtn');
+    if (!nowBtn) return;
+    nowBtn.onclick = () => snapCapture(true);
+    expBtn.onclick = snapExport;
+    clrBtn.onclick = snapClear;
+    await snapRefreshStats();
+    await snapTick();
+    setInterval(snapTick, 10000);
 });
 </script>
 </body>
