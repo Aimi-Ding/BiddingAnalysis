@@ -2,6 +2,8 @@
 
 盘前竞价系统
 
+**在线地址：https://aimi-ding.github.io/BiddingAnalysis/**
+
 > 竞价分析系统（修复版）：基于东方财富公开行情接口的 A 股集合竞价选股看板。
 > 本项目在原版基础上修正了四处计算错误，并更正了若干没有依据的指标名称。
 
@@ -206,7 +208,11 @@ python3 -m http.server 8899
 # 打开 http://127.0.0.1:8899/index.html
 ```
 
+**或者直接用在线版：https://aimi-ding.github.io/BiddingAnalysis/**（免安装，功能一致）
+
 **最佳使用时间：交易日 9:15–9:25。** 9:30 之后 `f615` 已冻结，看板的排序依据就失效了。
+
+> 注意：本仓库为公开仓库，GitHub Pages 站点本身也是公开可访问的。如果不希望别人打开这个页面，请自己本地跑。
 
 ### 导出与联动
 
@@ -222,7 +228,7 @@ python3 -m http.server 8899
 ### 1. 浏览器端到端
 
 ```bash
-cd ~/.dsh/bot/workspace
+# 在项目上级目录执行（该目录需已安装 puppeteer-core + 本机有 Chrome）
 node auction-screener/verify/e2e.mjs
 ```
 
@@ -233,7 +239,6 @@ node auction-screener/verify/e2e.mjs
 ### 2. 新旧算法对比
 
 ```bash
-cd ~/.dsh/bot/workspace
 node auction-screener/verify/compare.mjs
 ```
 
@@ -250,7 +255,6 @@ node auction-screener/verify/compare.mjs
 ### 3. 快照记录器
 
 ```bash
-cd ~/.dsh/bot/workspace
 node auction-screener/verify/snapshot.mjs
 ```
 
