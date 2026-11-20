@@ -1347,7 +1347,8 @@ function revRender(idx) {
             <div>成功率（收盘价 &gt; 开盘价）</div>
             <div><b class="snap-up">涨 ${rec.up}</b>　<b class="snap-down">跌 ${rec.down}</b>　平 ${rec.flat}　共 ${rec.n} 只${missTxt}</div>
             <div>平均收益 <b>${rec.avgRet > 0 ? '+' : ''}${rec.avgRet}%</b></div>
-            <div style="color:#6b7688">复盘对象：主页 ${rec.snapTime || ''} 那批</div>
+            <div style="color:#6b7688">复盘对象：${rec.snapTime || ''} 记录的那批</div>
+            <div style="color:#6b7688;font-size:11px">（主页现在显示的可能是另一批：筛选条件含「今日涨跌额&gt;0」，收盘后与早上不同）</div>
         </div>`;
 
     const items = rec.items || [];
