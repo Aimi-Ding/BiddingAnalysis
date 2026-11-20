@@ -413,6 +413,56 @@
         .snap-btn.primary { border-color: #4ade80; color: #bbf7d0; }
         .snap-btn.danger { border-color: #f87171; color: #fecaca; }
         .snap-hint { margin-top: 6px; font-size: 11px; color: #6b7688; line-height: 1.4; }
+
+        /* 数据明细浮层 */
+        .snap-modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 10000;
+            background: rgba(0,0,0,0.62);
+            backdrop-filter: blur(3px);
+            align-items: center;
+            justify-content: center;
+        }
+        .snap-modal.open { display: flex; }
+        .snap-modal-body {
+            width: min(760px, 92vw);
+            max-height: 78vh;
+            display: flex;
+            flex-direction: column;
+            background: #151a24;
+            border: 1px solid #3a4356;
+            border-radius: 14px;
+            padding: 14px 16px;
+            color: #dfe6f4;
+            font-size: 13px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+        }
+        .snap-modal-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 700;
+            color: #eef2ff;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #2c3446;
+        }
+        .snap-modal-sub { font-size: 12px; color: #8b96ab; margin: 8px 0; }
+        .snap-modal-list { overflow: auto; flex: 1; }
+        .snap-modal-list table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .snap-modal-list th {
+            text-align: left; padding: 6px 8px; color: #8b96ab; font-weight: 600;
+            border-bottom: 1px solid #2c3446; position: sticky; top: 0; background: #151a24;
+        }
+        .snap-modal-list td { padding: 6px 8px; border-bottom: 1px solid #232a38; }
+        .snap-modal-list tr:hover td { background: rgba(255,255,255,0.03); }
+        .snap-q1 { color: #4ade80; }
+        .snap-q0 { color: #fbbf24; }
+        .snap-modal-foot {
+            display: flex; justify-content: space-between; align-items: center;
+            padding-top: 10px; border-top: 1px solid #2c3446; font-size: 12px; color: #8b96ab;
+        }
     </style>
 </head>
 <body>
@@ -424,10 +474,27 @@
     <div class="snap-row">状态：<span id="snapState" class="snap-state-off">等待 9:25</span></div>
     <div class="snap-btns">
         <button class="snap-btn primary" id="snapNowBtn">立即抓取</button>
+        <button class="snap-btn" id="snapViewBtn">查看数据</button>
         <button class="snap-btn" id="snapExportBtn">导出</button>
         <button class="snap-btn danger" id="snapClearBtn">清空</button>
     </div>
     <div class="snap-hint" id="snapHint">9:25–9:30 自动抓取（此时含竞价量）；其余时间只能补抓竞价涨幅</div>
+</div>
+
+<!-- 已积累数据明细（点「查看数据」打开） -->
+<div class="snap-modal" id="snapModal">
+    <div class="snap-modal-body">
+        <div class="snap-modal-head">
+            <span><i class="fa fa-list"></i> 已积累的竞价快照</span>
+            <button class="snap-btn" id="snapModalClose">关闭</button>
+        </div>
+        <div class="snap-modal-sub" id="snapModalSub">—</div>
+        <div class="snap-modal-list" id="snapModalList"></div>
+        <div class="snap-modal-foot">
+            <span id="snapModalFoot"></span>
+            <button class="snap-btn" id="snapModalExport">导出全部</button>
+        </div>
+    </div>
 </div>
 
 <div class="container-main">
@@ -1167,6 +1234,61 @@ async function snapClear() {
     }
 }
 
+// 打开「已积累数据」明细：让用户能确认到底存了什么，而不是只看到一个天数
+async function snapShowData() {
+    const modal = document.getElementById('snapModal');
+    const list = document.getElementById('snapModalList');
+    const sub = document.getElementById('snapModalSub');
+    const foot = document.getElementById('snapModalFoot');
+    if (!modal) return;
+    modal.classList.add('open');
+    list.innerHTML = '<div style="padding:20px;color:#8b96ab">读取中…</div>';
+    sub.textContent = '—';
+    foot.textContent = '';
+
+    try {
+        const all = await idbAll();
+        if (!all.length) {
+            list.innerHTML = '<div style="padding:20px;color:#8b96ab">还没有数据。交易日 9:25 前打开页面，它会自动抓。</div>';
+            return;
+        }
+        all.sort((a, b) => (a.date < b.date ? 1 : -1));   // 最新在上
+
+        const qDays = all.filter(x => x.q === 1).length;
+        sub.textContent = `共 ${all.length} 个交易日：${qDays} 天含竞价量（可用于量能因子回测），`
+            + `${all.length - qDays} 天仅竞价涨幅准确`;
+
+        let html = '<table><thead><tr>'
+            + '<th>日期</th><th>抓取时间</th><th>类型</th><th>记录条数</th><th>竞价上涨</th><th>最高竞价涨幅</th>'
+            + '</tr></thead><tbody>';
+        let totRows = 0;
+        for (const d of all) {
+            const rows = d.rows || [];
+            let up = 0, maxBid = -Infinity;
+            for (let i = 0; i < rows.length; i++) {
+                const b = rows[i][1];
+                if (b > 0) up++;
+                if (b > maxBid) maxBid = b;
+            }
+            const n = d.n || rows.length;
+            totRows += n;
+            html += `<tr>
+                <td>${d.date}</td>
+                <td>${d.t || '-'}</td>
+                <td class="${d.q === 1 ? 'snap-q1' : 'snap-q0'}">${d.q === 1 ? '含竞价量' : '仅涨幅'}</td>
+                <td>${n}</td>
+                <td>${up}</td>
+                <td>${Number.isFinite(maxBid) ? maxBid.toFixed(2) + '%' : '-'}</td>
+            </tr>`;
+        }
+        html += '</tbody></table>';
+        list.innerHTML = html;
+        foot.textContent = `合计 ${totRows} 条竞价记录`;
+    } catch (e) {
+        list.innerHTML = `<div style="padding:20px;color:#f87171">读取失败：${(e && e.message) || e}</div>`;
+    }
+}
+
 async function snapTick() {
     const dt = snapNow();
     const dk = snapDateKey(dt);
@@ -1197,6 +1319,15 @@ window.addEventListener('DOMContentLoaded', async () => {
     nowBtn.onclick = () => snapCapture(true);
     expBtn.onclick = snapExport;
     clrBtn.onclick = snapClear;
+
+    const viewBtn = document.getElementById('snapViewBtn');
+    const modal = document.getElementById('snapModal');
+    const modalClose = document.getElementById('snapModalClose');
+    const modalExport = document.getElementById('snapModalExport');
+    if (viewBtn) viewBtn.onclick = snapShowData;
+    if (modalClose) modalClose.onclick = () => modal.classList.remove('open');
+    if (modalExport) modalExport.onclick = snapExport;
+    if (modal) modal.onclick = (ev) => { if (ev.target === modal) modal.classList.remove('open'); };
     await snapRefreshStats();
     await snapTick();
     setInterval(snapTick, 10000);
