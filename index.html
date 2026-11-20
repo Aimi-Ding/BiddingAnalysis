@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>左右分屏竞价系统</title>
+    <meta http-equiv="Content-Security-Policy" content="
+ default-src 'self' data:;
+ script-src 'self' 'unsafe-inline' 'unsafe-eval';
+ style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com;
+ font-src 'self' data: https://cdnjs.cloudflare.com;
+ img-src 'self' data: *;
+ connect-src 'self' https://push2dycalc.eastmoney.com;
+">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        html, body {
+            height: 100%;
+            overflow: hidden;
+        }
+        /* 外层容器 左右横向布局 */
+        .container-main {
+            height: 100%;
+            display: flex;
+            flex-direction: row;
+        }
+        /* 左右面板各占50% */
+        .panel-left, .panel-right {
+            width: 50%;
+            height: 100%;
+            overflow: auto;
+        }
+        .panel-left {
+            border-right: 2px solid #444;
+        }
+
+        /* ========== 左侧页面样式（原1.html） ========== */
+        .page-left{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+            background: linear-gradient(135deg, #0f1219 0%, #0a0c12 100%);
+            color: #eef2ff;
+            padding: 20px;
+            line-height: 1.5;
+            min-height:100%;
+        }
+        .wrap-left {
+            max-width: 1300px;
+            margin: 0 auto;
+        }
+        .hero-section {
+            text-align: center;
+            margin-bottom: 20px;
+            margin-top: 10px;
+        }
+        .dominant-title {
+            font-size: 40px;
+            font-weight: 800;
+            letter-spacing: 3px;
+            background: linear-gradient(135deg, #ff4d4d, #cc0000);
+            background-clip: text;
+            -webkit-background-clip: text;
+            color: transparent;
+            display: inline-block;
+        }
+        @supports not (background-clip: text) {
+            .dominant-title { color: #ff3a3a; text-shadow: 0 0 5px rgba(255,0,0,0.3); }
+        }
+        .title-sub {
+            font-size: 14px;
+            color: #ffa2a2;
+            background: rgba(0,0,0,0.4);
+            display: inline-block;
+            padding: 5px 16px;
+            border-radius: 40px;
+            backdrop-filter: blur(4px);
+            margin-top: 12px;
+            letter-spacing: 1px;
+        }
+        .alert-rule {
+            background: linear-gradient(90deg, rgba(255,60,60,0.1), rgba(200,40,40,0.05));
+            border-left: 4px solid #ff4d4d;
+            padding: 12px 20px;
+            border-radius: 16px;
+            margin: 20px 0 25px 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            backdrop-filter: blur(8px);
+            gap: 12px;
+        }
+        .rule-text {
+            font-size: 14px;
+            font-weight: 500;
+            color: #ffbcbc;
+        }
+        .rule-text strong {
+            color: #ff7b7b;
+        }
+        .right-group {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .btn-group {
+            display: flex;
+            gap: 15px;
+        }
+        .tdx-export-btn {
+            background: rgba(255, 70, 70, 0.2);
+            border: 1px solid #ff5c5c;
+            padding: 8px 20px;
+            border-radius: 40px;
+            color: #fff0f0;
+            font-weight: bold;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+            backdrop-filter: blur(4px);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .tdx-export-btn:hover {
+            background: #ff3a3a;
+            color: white;
+            border-color: white;
+            transform: translateY(-1px);
+            box-shadow: 0 5px 12px rgba(255,60,60,0.3);
+        }
+        .reset-lock-btn {
+            background: rgba(100, 130, 255, 0.2);
+            border: 1px solid #5a7aff;
+        }
+        .reset-lock-btn:hover {
+            background: #3a6eff;
+        }
+        .live-time {
+            background: rgba(0, 0, 0, 0.45);
+            backdrop-filter: blur(8px);
+            border-radius: 32px;
+            padding: 6px 16px;
+            text-align: center;
+            border: 1px solid rgba(255, 100, 100, 0.3);
+            font-family: monospace;
+            white-space: nowrap;
+        }
+        .live-time .time-digital {
+            font-size: 20px;
+            font-weight: 700;
+            color: #ffbb99;
+            letter-spacing: 1px;
+        }
+        .live-time .date-info {
+            font-size: 11px;
+            color: #ffccaa;
+            margin-top: 2px;
+        }
+        .top3-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 25px;
+            justify-content: center;
+            margin: 30px 0 40px;
+        }
+        .stock-card {
+            background: rgba(18, 22, 35, 0.85);
+            backdrop-filter: blur(12px);
+            border-radius: 32px;
+            padding: 20px 18px;
+            width: 280px;
+            border: 1px solid rgba(255, 80, 80, 0.35);
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 20px 35px -12px rgba(0,0,0,0.5);
+            position: relative;
+            overflow: hidden;
+            cursor: pointer;
+        }
+        .stock-card:hover {
+            transform: translateY(-5px);
+            border-color: #ff7373;
+            box-shadow: 0 25px 40px -12px rgba(255,50,50,0.3);
+        }
+        .card-rank {
+            font-size: 48px;
+            font-weight: 800;
+            background: linear-gradient(135deg, #ff4d4d, #ff9999);
+            background-clip: text;
+            -webkit-background-clip: text;
+            color: transparent;
+            position: absolute;
+            top: 10px;
+            right: 20px;
+            opacity: 0.4;
+            font-style: italic;
+        }
+        .stock-name {
+            font-size: 24px;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: 1px;
+        }
+        .stock-code {
+            font-size: 14px;
+            color: #bbbbff;
+            margin-top: 4px;
+            font-family: monospace;
+        }
+        .prob-section {
+            margin: 20px 0 15px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 28px;
+            padding: 10px 12px;
+            text-align: center;
+        }
+        .prob-value {
+            font-size: 40px;
+            font-weight: 800;
+            color: #ff7777;
+            line-height: 1;
+        }
+        .prob-label {
+            font-size: 12px;
+            color: #ffb7b7;
+            margin-left: 5px;
+        }
+        .bid-change {
+            font-size: 24px;
+            font-weight: 600;
+            margin: 12px 0 6px;
+        }
+        .bid-change.up { color: #ff8a6f; }
+        .confidence {
+            font-size: 13px;
+            background: rgba(255,100,100,0.2);
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 30px;
+        }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 12px;
+            font-size: 13px;
+            color: #bfbfef;
+            border-top: 1px dashed rgba(255,80,80,0.2);
+            padding-top: 12px;
+        }
+        .empty-state {
+            background: rgba(0,0,0,0.5);
+            padding: 40px;
+            text-align: center;
+            border-radius: 32px;
+            color: #ffaaaa;
+        }
+        .footnote {
+            text-align: center;
+            font-size: 12px;
+            color: #7788aa;
+            margin-top: 40px;
+            padding-bottom: 20px;
+            border-top: 1px solid rgba(255,255,255,0.05);
+            padding-top: 20px;
+        }
+        .toast-msg {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #ff3a3a;
+            color: white;
+            padding: 8px 22px;
+            border-radius: 40px;
+            font-size: 13px;
+            z-index: 10000;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            animation: fadeInOut 2.2s forwards;
+        }
+        @keyframes fadeInOut {
+            0% { opacity: 0; transform: translateX(-50%) translateY(10px);}
+            15% { opacity: 1; transform: translateX(-50%) translateY(0);}
+            85% { opacity: 1; transform: translateX(-50%) translateY(0);}
+            100% { opacity: 0; transform: translateX(-50%) translateY(-10px); visibility: hidden;}
+        }
+        .loading-placeholder {
+            text-align: center;
+            padding: 40px;
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid rgba(255,80,80,0.2);
+            border-top: 3px solid #ff5e5e;
+            border-radius: 50%;
+            animation: spin 0.9s linear infinite;
+            margin: 0 auto 15px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ========== 右侧页面样式（原2.html） ========== */
+        .page-right{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+            background: linear-gradient(135deg, #0f1219 0%, #0a0c12 100%);
+            color: #eef2ff;
+            padding: 2px;
+            line-height: 1.5;
+            min-height:100%;
+        }
+        .wrap-right {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .stock-table-container {
+            background: rgba18, 22, 35, 0.85);
+            backdrop-filter: blur(1px);
+            border-radius: 1px;
+            padding: 10px;
+            border: 1px solid rgba(255, 80, 80, 0.35);
+            margin: 2px 0 4px;
+        }
+        .stock-table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: center;
+        }
+        .stock-table thead {
+            background: rgba(255, 60, 60, 0.15);
+            border-bottom: 2px solid #ff4d4d;
+        }
+        .stock-table th {
+            padding: 4px 2px;
+            font-weight: 600;
+            color: #ffbcbc;
+            font-size: 12px;
+        }
+        .stock-table td {
+            padding: 3px 2px;
+            border-bottom: 1px solid rgba(255, 80, 80, 0.1);
+            font-size: 12px;
+        }
+        .stock-table tbody tr:hover {
+            background: rgba(255, 60, 60, 0.05);
+        }
+        .rank-col {
+            font-weight: bold;
+            color: #ff3a3a;
+        }
+        .up { color: #ff8a6f; }
+        .down { color: #00c864; }
+        .real-green { color: #00c864 !important; }
+        .code-click {
+            cursor: pointer;
+            color: #ffd700 !important;
+            font-weight: bold;
+        }
+        .count-select {
+            background: rgba(0,0,0,0.5);
+            border: 1px solid #ff5c5c;
+            color: #fff;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 12px;
+            outline: none;
+            cursor: pointer;
+        }
+        .count-select:focus {
+            box-shadow: 0 0 0 1px #ff5c5c;
+        }
+    </style>
+</head>
+<body>
+<div class="container-main">
+    <!-- 左侧面板：原1.html -->
+    <div class="panel-left">
+        <div class="page-left">
+            <div class="wrap-left">
+                <div class="hero-section">
+                    <h1 class="dominant-title">竞价分析系统</h1>
+                    <div class="title-sub">🔴 红色预警 · 顺势而为竞价 | 固定9:29:30前三出票</div>
+                </div>
+                <div class="alert-rule">
+                    <div class="rule-text">
+                        <i class="fa fa-trash"></i> <strong>剔除策略：</strong> ST股票 · 昨日涨停板 · 停牌股 · 竞价涨幅≥7%  |
+                        <i class="fa fa-sort-amount-desc"></i> 按<strong>综合分倒序前三</strong>锁定9:30分快照（盘中/盘后不变）
+                    </div>
+                    <div class="right-group">
+                        <div class="btn-group">
+                            <button id="exportTop3Btn" class="tdx-export-btn"><i class="fa fa-download"></i> 导出前三至通达信</button>
+                            <button id="refreshLockedBtn" class="tdx-export-btn reset-lock-btn"><i class="fa fa-refresh"></i> 重新锁定(9:30数据)</button>
+                        </div>
+                        <div class="live-time" id="liveTimeDisplayTop">
+                            <div class="time-digital">--:--:--</div>
+                            <div class="date-info">----年--月--日 周-</div>
+                        </div>
+                    </div>
+                </div>
+                <div id="top3CardsArea" class="top3-container">
+                    <div class="loading-placeholder">
+                        <div class="spinner"></div>
+                        <div>正在获取竞价快照，锁定9:30最强信号...</div>
+                    </div>
+                </div>
+                <div class="footnote">
+                    <i class="fa fa-bullhorn"></i> 固定9:30前出票逻辑 | 综合分为指标加权评分，非涨停概率预测 | 竞价涨幅&lt;7%严格过滤 | 按综合分倒序前三
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 右侧面板：原2.html -->
+    <div class="panel-right">
+        <div class="page-right">
+            <div class="wrap-right">
+                <div class="alert-rule">
+                    <div class="rule-text">
+                        <i class="fa fa-trash"></i> <strong>剔除策略：</strong> ST股票 · 昨日涨停板 · 停牌股 · 竞价涨幅≥9.5%  |
+                        <i class="fa fa-sort-amount-desc"></i>锁定（仅缓存一次，9:30后不可重新选股）
+                    </div>
+                    <div class="right-group">
+                        <div class="btn-group">
+                            <button id="exportTop10Btn" class="tdx-export-btn"><i class="fa fa-download"></i> 导出至通达信</button>
+                            <button id="refreshLockedBtnBot" class="tdx-export-btn reset-lock-btn"><i class="fa fa-refresh"></i> 重新锁定(9:30前可用)</button>
+                            <button id="refreshRealTimeBtn" class="tdx-export-btn real-time-btn"><i class="fa fa-refresh"></i> 刷新实时涨幅</button>
+                            <button id="switchLinkBtn" class="tdx-export-btn switch-link-btn"><i class="fa fa-exchange"></i> 联动：通达信</button>
+                            <select id="showCountSelect" class="count-select">
+                                <option value="3">显示3只</option>
+                                <option value="5" selected>显示5只</option>
+                                <option value="10">显示10只</option>
+                                <option value="20">显示20只</option>
+                                <option value="50">显示50只</option>
+                                <option value="100">显示100只</option>
+                            </select>
+                        </div>
+                        <div class="live-time" id="liveTimeDisplayBot">
+                            <div class="time-digital">--:--:--</div>
+                        </div>
+                    </div>
+                </div>
+                <div id="top10TableArea" class="stock-table-container">
+                    <div class="loading-placeholder">
+                        <div class="spinner"></div>
+                        <div>正在初始化选股数据...</div>
+                    </div>
+                </div>
+                <div class="footnote">
+                    <i class="fa fa-bullhorn"></i> 无缓存自动执行1次选股并缓存 | 9:30后仅更新实时涨幅 | 实时涨幅＜竞价涨幅自动标绿 | 点击股票代码联动软件
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ===================== 公共全局变量 =====================
+// 字段对照（实测自东财返回）：
+//   f2 最新价   f3 涨跌幅%   f4 涨跌额   f5 成交量(手)   f6 成交额(元)
+//   f10 量比    f12 代码     f14 名称    f18 昨收价
+//   f20 总市值(元)  f21 流通市值(元)
+//   f615 竞价涨幅%  f630 警示类型  f100 行业  f102 省份  f103 概念
+//
+// 【修复①】原版 fields 里没有 f20/f21/f6/f18：
+//   - 左侧打分读 stock.f20（成交额）却从未请求 → 恒为 0，12% 权重永远拿不到分
+//   - 右侧打分读 stock.f10 当流通市值 → f10 其实是量比，见【修复③】
+const STOCK_API = 'https://push2dycalc.eastmoney.com/api/qt/clist/get?fs=m:1+t:2,m:0+t:6,m:0+t:80&fltt=2&invt=2&fields=f2,f3,f4,f5,f6,f10,f12,f14,f18,f20,f21,f615,f630,f100,f102,f103&fid=f3&po=1&pn=1&pz=100&np=1&ut=c92c50e6b0fab2c17cd5e276e9a79c42';
+let cachedTop3 = [];
+let isDataLockedTop = false;
+let cachedTopList = [];
+let isDataCachedBot = false;
+let linkMode = 'tdx';
+let showCount = 5;
+
+// ========== 通用工具函数 ==========
+function num(v, d = 0) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : d;
+}
+
+function getBidChange(stock) {
+    // f615 = 竞价涨幅。注意它在 9:25 之后就不再更新，开盘后只反映竞价结果。
+    const v = num(stock.f615, NaN);
+    return Number.isFinite(v) ? v : num(stock.f3);
+}
+
+function getPrevClose(stock) {
+    // 昨收优先用接口字段 f18；缺失时用「最新价 - 涨跌额」反推。
+    const direct = num(stock.f18, NaN);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+    const back = num(stock.f2) - num(stock.f4);
+    return back > 0 ? back : 0;
+}
+
+// 【修复②】原版 getYesterdayChange 把「涨跌额 f4」当成「昨日收盘价」来除：
+//     ((f4 - f2) / f2) * 100
+//   实测三只股票会算成 -83% / -86% / -87%，恒为大负数，
+//   于是 `if (yestChg >= 9.5) return false`（剔除昨日大涨）永远不触发。
+//   正确口径是相对昨收的涨幅。接口不提供「前日收盘价」，
+//   所以真正的「昨日涨幅」算不出来，改用下面的 isYesterdayLimitUp。
+function getTodayChange(stock) {
+    const prev = getPrevClose(stock);
+    if (prev <= 0) return 0;
+    return ((num(stock.f2) - prev) / prev) * 100;
+}
+
+function isYesterdayLimitUp(stock) {
+    // 东财自己在概念字段里标注了「昨日涨停 / 昨日首板 / 昨日涨停_含一字」，
+    // 这是接口里唯一能可靠判断「昨日是否涨停」的依据（实测有效，
+    // 如 *ST仕净的 f103 就含「昨日涨停,昨日首板」）。
+    const concept = String(stock.f103 || '');
+    return concept.includes('昨日涨停') || concept.includes('昨日首板');
+}
+function isBefore930() {
+    const now = new Date();
+    const beijingTime = new Date(now.getTime() + 8*60*60*1000 + now.getTimezoneOffset()*60*1000);
+    const hours = beijingTime.getHours();
+    const minutes = beijingTime.getMinutes();
+    return hours < 9 || (hours === 9 && minutes < 30);
+}
+function showToast(msg, type='info'){
+    document.querySelector('.toast-msg')?.remove();
+    let div = document.createElement('div');
+    div.className = 'toast-msg';
+    div.innerHTML = `<i class="fa fa-${type==='success'?'check-circle':'info-circle'}"></i> ${msg}`;
+    document.body.appendChild(div);
+    setTimeout(()=>div.remove(),2500);
+}
+function updateAllTime(){
+    const now = new Date();
+    const beijingTime = new Date(now.getTime() + 8*60*60*1000 + now.getTimezoneOffset()*60*1000);
+    const year = beijingTime.getFullYear();
+    const month = String(beijingTime.getMonth()+1).padStart(2,'0');
+    const day = String(beijingTime.getDate()).padStart(2,'0');
+    const hh = String(beijingTime.getHours()).padStart(2,'0');
+    const mm = String(beijingTime.getMinutes()).padStart(2,'0');
+    const ss = String(beijingTime.getSeconds()).padStart(2,'0');
+    const wk = ['周日','周一','周二','周三','周四','周五','周六'][beijingTime.getDay()];
+    const timestr = `${hh}:${mm}:${ss}`;
+    const datestr = `${year}年${month}月${day}日 ${wk}`;
+
+    const topTime = document.querySelector('#liveTimeDisplayTop .time-digital');
+    const topDate = document.querySelector('#liveTimeDisplayTop .date-info');
+    if(topTime) topTime.textContent = timestr;
+    if(topDate) topDate.textContent = datestr;
+
+    const botTime = document.querySelector('#liveTimeDisplayBot .time-digital');
+    if(botTime) botTime.textContent = timestr;
+
+    const lockBtnBot = document.getElementById('refreshLockedBtnBot');
+    if(lockBtnBot) lockBtnBot.disabled = !isBefore930();
+}
+
+// ===================== 左侧面板 前三卡片逻辑 =====================
+const clamp01 = (x) => Math.min(Math.max(Number.isFinite(x) ? x : 0, 0), 1);
+
+// 说明：这个函数原先叫 computeAiProbabilityTop，返回的 "probability" 被当成"涨停率"显示。
+// 它并不是概率，也没有任何模型参与，本质是 6 个指标的手工加权求和。这里保留算法，
+// 但把输出正名为"综合分"（0-100），避免被误读成涨停概率。
+function computeScoreTop(stock) {
+    const bidChange = getBidChange(stock);
+    const todayChange = num(stock.f3);
+    const warnType = num(stock.f630);
+    // 【修复①】原来读 stock.f20 并称作 amount，但 f20 既没被请求、本身也是总市值。
+    // 成交额是 f6。实测：用总市值算这一项 97% 的股票都满分（无区分度），
+    // 用成交额只有 12% 满分，才有真正的区分作用。
+    const amount = num(stock.f6);
+    const volumeRatio = num(stock.f10);      // f10 是量比，这里用得对
+
+    let bidVolumeEst = num(stock.f5) * Math.min(Math.max(bidChange / 6, 0.2), 1.5);
+    bidVolumeEst = Math.min(bidVolumeEst, 500000);
+
+    const normBid       = clamp01(bidChange / 8);
+    const normToday     = clamp01(todayChange / 9);
+    const warnScore     = warnType === 5 ? 1.0 : warnType === 4 ? 0.85 : 0.3;
+    const normAmount    = clamp01(Math.log10(amount + 1) / 9);   // 10 亿成交额即满分
+    const normVolRatio  = clamp01(volumeRatio / 8);
+    const normVolumeEst = clamp01(Math.log10(bidVolumeEst + 1) / 5.5);
+
+    const total = normBid * 0.32 + normToday * 0.22 + warnScore * 0.16
+                + normAmount * 0.12 + normVolRatio * 0.08 + normVolumeEst * 0.10;
+
+    // 原版 "confidence = 70 + 两个归一化值" 是没有统计含义的数字。这里改成如实统计
+    // 本次打分有几个因子真正拿到了数据（满分 6 个），供使用者判断结论可靠程度。
+    const factors = [
+        Number.isFinite(num(stock.f615, NaN)),
+        todayChange !== 0,
+        warnType > 0,
+        amount > 0,
+        volumeRatio > 0,
+        bidVolumeEst > 0,
+    ];
+    const coverage = Math.round(factors.filter(Boolean).length / factors.length * 100);
+
+    return { score: Math.round(clamp01(total) * 100), coverage };
+}
+
+function isEligibleTop(stock) {
+    const name = String(stock.f14 || '');
+    if (name.includes('ST')) return false;
+    if (num(stock.f4) <= 0 || num(stock.f5) === 0) return false;
+    // 【修复②】「剔除昨日涨停」改为读东财自带的概念标签，原来那条比较永远不会成立。
+    if (isYesterdayLimitUp(stock)) return false;
+    if (getBidChange(stock) >= 7) return false;
+    return true;
+}
+function renderTop3(top3List) {
+    const container = document.getElementById('top3CardsArea');
+    if (!container) return;
+    if (!top3List || top3List.length === 0) {
+        container.innerHTML = `<div class="empty-state"><i class="fa fa-warning"></i> 暂无符合条件股票</div>`;
+        return;
+    }
+    const medals = ['🥇 第1名', '🥈 第2名', '🥉 第3名'];
+    let html = '';
+    top3List.forEach((item, idx) => {
+        let sign = item.bidChange > 0 ? '+' : '';
+        let cls = item.bidChange > 0 ? 'up' : '';
+        const tdxLink = `http://www.treeid/code_${item.code}`;
+        html += `
+        <div class="stock-card" onclick="window.open('${tdxLink}')">
+            <div class="card-rank">${medals[idx]}</div>
+            <div class="stock-name">${item.name}</div>
+            <div class="stock-code">${item.code}</div>
+            <div class="prob-section">
+                <span class="prob-value">${item.score}</span><span class="prob-label">综合分</span>
+            </div>
+            <div class="bid-change ${cls}">${sign}${item.bidChange.toFixed(2)}% <span style="font-size:14px">竞价涨幅</span></div>
+            <div class="info-row">
+                <span><i class="fa fa-shield"></i> 数据完整度 ${item.coverage}%</span>
+                <span><i class="fa fa-bolt"></i> 规则打分</span>
+            </div>
+        </div>`;
+    });
+    container.innerHTML = html;
+}
+async function fetchTopPanel(){
+    const wrap = document.getElementById('top3CardsArea');
+    wrap.innerHTML = `<div class="loading-placeholder"><div class="spinner"></div><div>正在获取竞价快照...</div></div>`;
+    try{
+        const res = await fetch(STOCK_API);
+        const json = await res.json();
+        if(json.rc!==0||!json.data?.diff) throw new Error("数据异常 rc=" + json.rc);
+        const raw = json.data.diff;
+        const filtered = raw.filter(s=>isEligibleTop(s));
+        const list = filtered.map(s=>{
+            const p = computeScoreTop(s);
+            return {
+                code:s.f12,name:s.f14,
+                score:p.score,coverage:p.coverage,
+                bidChange:getBidChange(s),
+                todayChange:getTodayChange(s),
+                raw:s
+            };
+        });
+        list.sort((a,b)=>b.score-a.score);
+        cachedTop3 = list.slice(0,3);
+        isDataLockedTop = true;
+        renderTop3(cachedTop3);
+        showToast(`✅ 左侧面板数据加载完成`,'success');
+    }catch(e){
+        wrap.innerHTML = `<div class="empty-state">获取失败：${e && e.message ? e.message : e}<br><button onclick="fetchTopPanel()" class="tdx-export-btn">重试</button></div>`;
+    }
+}
+function exportTop3ToTdx(){
+    if(!cachedTop3.length){showToast("暂无数据");return;}
+    let str = "";
+    cachedTop3.forEach(item=>{
+        let m = item.code.startsWith('6')?'1':((item.code.startsWith('4')||item.code.startsWith('8'))?'2':'0');
+        str += `${m}#${item.code}|`;
+    });
+    str = str.slice(0,-1);
+    window.location.href=`http://www.treeid/AddToBlock_${str}`;
+}
+
+// ===================== 右侧面板 表格选股逻辑 =====================
+// 说明：原名叫 computeAiProbabilityBot，同样没有任何模型参与，输出正名为"综合分"。
+function computeScoreBot(stock) {
+    const bidChange = getBidChange(stock);
+    const warnType = num(stock.f630);
+    const todayChange = getTodayChange(stock);
+
+    // 【修复③】原来写 `const circulationMarketValue = stock.f10`，
+    // 但 f10 是「量比」，流通市值是 f21（单位：元）。实测两者差好几个数量级：
+    //   易天股份  f10=15.36(量比)   f21=32.03亿(真实流通市值)
+    // 用 f10 算出的"相对量能"上亿，必然命中最高档拿满分，这一项等于没做。
+    const floatCap = num(stock.f21);                 // 流通市值(元)
+    const price = num(stock.f2);
+
+    // 改用「竞价换手率」= 竞价成交量(股) / 流通股本，量纲才是对的。
+    // 流通股本 = 流通市值 / 现价。实测易天股份算得 11.88%，与腾讯行情换手率一致。
+    const floatShares = (floatCap > 0 && price > 0) ? floatCap / price : 0;
+    const bidTurnover = floatShares > 0 ? (num(stock.f5) * 100) / floatShares * 100 : 0;
+
+    let relativeVolumeScore = 0.3;
+    if (bidTurnover >= 3) relativeVolumeScore = 1.0;
+    else if (bidTurnover >= 2) relativeVolumeScore = 0.9;
+    else if (bidTurnover >= 1) relativeVolumeScore = 0.75;
+    else if (bidTurnover >= 0.5) relativeVolumeScore = 0.55;
+
+    const warnScore = warnType === 5 ? 1.0 : (warnType === 4 ? 0.85 : 0.2);
+
+    let bidChangeScore = 0.1;
+    if (bidChange >= 7 && bidChange <= 9) bidChangeScore = 1.0;
+    else if (bidChange >= 5) bidChangeScore = 0.8;
+    else if (bidChange >= 3) bidChangeScore = 0.6;
+    else if (bidChange >= 1) bidChangeScore = 0.4;
+    else if (bidChange >= 0) bidChangeScore = 0.25;
+
+    // 【修复②】原来叫 yestScore，用 getYesterdayChange 取"昨日涨幅"，但接口没有前日收盘价，
+    // 那个函数实际只算出错误的负数。这里改用今日涨幅（相对昨收），并正名为 todayScore。
+    // 注意：9:25 集合竞价结束前今日涨幅尚未形成，此项对所有股票同为最低档，
+    // 不影响竞价时段的排序（那时主要看 f615 竞价涨幅与量能）。
+    const todayScore = todayChange >= 9.5 ? 1.0 : (todayChange >= 7 ? 0.7 : (todayChange >= 3 ? 0.5 : 0.3));
+
+    // 市值档位（f21 换算成亿元）
+    const capYi = floatCap / 1e8;
+    const mvScore = capYi > 0
+        ? (capYi < 50 ? 1.0 : (capYi < 100 ? 0.8 : (capYi < 200 ? 0.5 : 0.3)))
+        : 0.3;
+
+    // 【修复④】原版权重 0.30+0.20+0.20+0.15+0.10 = 0.95，不足 1，
+    // 导致右侧总分天然比左侧低 5 分。这里按原相对比例归一化，总分回到 0-100。
+    const RAW_WEIGHTS = [0.30, 0.20, 0.20, 0.15, 0.10];
+    const WEIGHT_SUM = RAW_WEIGHTS.reduce((a, b) => a + b, 0);
+    const raw = relativeVolumeScore * 0.30 + warnScore * 0.20 + bidChangeScore * 0.20
+              + todayScore * 0.15 + mvScore * 0.10;
+    const score = clamp01(raw / WEIGHT_SUM) * 100;
+
+    const factors = [
+        bidTurnover > 0,
+        warnType > 0,
+        Number.isFinite(num(stock.f615, NaN)),
+        todayChange !== 0,
+        capYi > 0,
+    ];
+    const coverage = Math.round(factors.filter(Boolean).length / factors.length * 100);
+
+    return { score: Math.round(score), coverage };
+}
+
+function isEligibleBot(stock){
+    const name = String(stock.f14 || '');
+    if (name.includes('ST')) return false;
+    if (num(stock.f4) <= 0 || num(stock.f5) === 0) return false;
+    // 【修复②】同左侧，改为读东财概念标签判断昨日涨停
+    if (isYesterdayLimitUp(stock)) return false;
+    if (getBidChange(stock) >= 9.5) return false;
+    return true;
+}
+function linkToSoftware(code){
+    if(linkMode==='tdx'){
+        let m = code.startsWith('6')?'1':((code.startsWith('4')||code.startsWith('8'))?'2':'0');
+        window.location.href=`http://www.treeid/AddToBlock_${m}#${code}`;
+        showToast(`联动通达信 ${code}`,'success');
+    }else{
+        const iframe = document.createElement('iframe');
+        iframe.style.display='none';
+        iframe.src=`dzh://VIEWSTOCK?PAGE=技术分析&LABEL=${code}`;
+        document.body.appendChild(iframe);
+        setTimeout(()=>iframe.remove(),1000);
+    }
+}
+function switchLinkMode(){
+    linkMode = linkMode==='tdx'?'dzh':'tdx';
+    const btn = document.getElementById('switchLinkBtn');
+    btn.innerHTML = linkMode==='tdx'?`<i class="fa fa-exchange"></i> 联动：通达信`:`<i class="fa fa-exchange"></i> 联动：大智慧`;
+    showToast(`切换联动模式：${linkMode}`);
+}
+function renderTable(){
+    const wrap = document.getElementById('top10TableArea');
+    const list = cachedTopList.slice(0,showCount);
+    if(!list.length){
+        wrap.innerHTML = `<div class="empty-state">暂无符合条件股票</div>`;
+        return;
+    }
+    let html = `<table class="stock-table"><thead><tr>
+        <th>排名</th><th>代码</th><th>名称</th><th>竞价涨幅</th><th>实时涨幅</th>
+        <th>量比</th><th>行业</th><th>省份</th><th>概念</th><th>综合分</th><th>数据完整度</th>
+        </tr></thead><tbody>`;
+    list.forEach((item,idx)=>{
+        const rcls = item.realChange < item.bidChange ? 'real-green' : (item.realChange>0?'up':'down');
+        const bcls = item.bidChange>0?'up':'down';
+        const s1 = item.bidChange>0?'+':'';
+        const s2 = item.realChange>0?'+':'';
+        html += `<tr>
+        <td class="rank-col">${idx+1}</td>
+        <td class="code-click" onclick="linkToSoftware('${item.code}')">${item.code}</td>
+        <td>${item.name}</td>
+        <td class="${bcls}">${s1}${item.bidChange.toFixed(2)}%</td>
+        <td class="${rcls}">${s2}${item.realChange.toFixed(2)}%</td>
+        <td>${item.volumeRatio.toFixed(2)}</td>
+        <td>${item.industry}</td>
+        <td>${item.province}</td>
+        <td style="max-width:180px;white-space:pre-wrap">${item.concept}</td>
+        <td class="up">${item.score}</td>
+        <td>${item.coverage}%</td>
+        </tr>`;
+    });
+    html += `</tbody></table>`;
+    wrap.innerHTML = html;
+}
+async function fetchBotPanel(){
+    const wrap = document.getElementById('top10TableArea');
+    if(isDataCachedBot){ renderTable();return; }
+    wrap.innerHTML = `<div class="loading-placeholder"><div class="spinner"></div><div>选股加载中...</div></div>`;
+    try{
+        const res = await fetch(STOCK_API);
+        const json = await res.json();
+        if(json.rc!==0||!json.data?.diff) throw new Error("数据异常 rc=" + json.rc);
+        const raw = json.data.diff;
+        const filtered = raw.filter(s=>isEligibleBot(s));
+        let arr = filtered.map(s=>{
+            const p = computeScoreBot(s);
+            return {
+                code:s.f12,name:s.f14,
+                score:p.score,coverage:p.coverage,
+                bidChange:getBidChange(s),
+                realChange:num(s.f3),
+                // 原版这一列表头写「涨速」但取的是 f10（量比）。量比本身是有用指标，
+                // 表头改为「量比」，与字段一致。
+                volumeRatio:num(s.f10),
+                industry:s.f100||'-',
+                province:s.f102||'-',
+                concept:s.f103||'-',
+                raw:s
+            };
+        });
+        arr.sort((a,b)=>b.score-a.score);
+        cachedTopList = arr;
+        isDataCachedBot = true;
+        renderTable();
+        showToast("✅右侧选股缓存完成",'success');
+    }catch(e){
+        wrap.innerHTML = `<div class="empty-state">获取失败：${e && e.message ? e.message : e}<br><button onclick="fetchBotPanel()" class="tdx-export-btn">重试</button></div>`;
+    }
+}
+async function refreshRealTimeBot(){
+    if(!isDataCachedBot){
+        showToast("无缓存，自动选股");
+        await fetchBotPanel();
+        return;
+    }
+    try{
+        const res = await fetch(STOCK_API);
+        const json = await res.json();
+        json.data.diff.forEach(s=>{
+            const find = cachedTopList.find(x=>x.code===s.f12);
+            if(find) find.realChange = s.f3||0;
+        });
+        renderTable();
+        showToast("✅实时涨幅更新成功",'success');
+    }catch(e){
+        showToast("更新失败",'error');
+    }
+}
+function reLockBot(){
+    if(!isBefore930()){
+        showToast("❌9:30后禁止重新选股",'error');
+        return;
+    }
+    isDataCachedBot = false;
+    fetchBotPanel();
+}
+function exportBotTdx(){
+    const list = cachedTopList.slice(0,showCount);
+    if(!list.length){showToast("暂无数据");return;}
+    let str = "";
+    list.forEach(item=>{
+        let m = item.code.startsWith('6')?'1':((item.code.startsWith('4')||item.code.startsWith('8'))?'2':'0');
+        str += `${m}#${item.code}|`;
+    });
+    str = str.slice(0,-1);
+    window.location.href=`http://www.treeid/AddToBlock_${str}`;
+}
+function changeShowCount(){
+    const sel = document.getElementById('showCountSelect');
+    showCount = parseInt(sel.value);
+    renderTable();
+}
+
+// ===================== 页面初始化 =====================
+window.addEventListener('DOMContentLoaded',async ()=>{
+    fetchTopPanel();
+    fetchBotPanel();
+
+    // 左侧按钮
+    document.getElementById('exportTop3Btn').onclick = exportTop3ToTdx;
+    document.getElementById('refreshLockedBtn').onclick = fetchTopPanel;
+
+    // 右侧按钮
+    document.getElementById('exportTop10Btn').onclick = exportBotTdx;
+    document.getElementById('refreshLockedBtnBot').onclick = reLockBot;
+    document.getElementById('refreshRealTimeBtn').onclick = refreshRealTimeBot;
+    document.getElementById('switchLinkBtn').onclick = switchLinkMode;
+    document.getElementById('showCountSelect').onchange = changeShowCount;
+
+    updateAllTime();
+    setInterval(updateAllTime,1000);
+});
+</script>
+</body>
+</html>
