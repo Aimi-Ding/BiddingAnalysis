@@ -476,6 +476,11 @@
         .snap-table-day td:nth-child(2) { color: #8b96ab; }
         .snap-up { color: #f87171; }
         .snap-down { color: #4ade80; }
+        .snap-sec-title {
+            font-size: 12px; color: #9fb0cc; font-weight: 700;
+            margin: 10px 0 6px; padding-left: 6px; border-left: 3px solid #4a5a7a;
+        }
+        .snap-empty-row { padding: 10px 6px; color: #6b7688; font-size: 12px; }
     </style>
 </head>
 <body>
@@ -1169,12 +1174,14 @@ async function snapRefreshStats() {
         dEl.textContent = all.length;
         lEl.textContent = all.length ? all[all.length - 1].date : '—';
         const qDays = all.filter(x => x.q === 1).length;
-        const rows = all.reduce((acc, x) => acc + (x.n || 0), 0);
-        if (hEl) hEl.textContent = `含竞价量 ${qDays} 天｜共 ${rows} 条｜存于 IndexedDB`;
+        const total = all.reduce((acc, x) => acc + ((x.left || []).length + (x.right || []).length || x.n || 0), 0);
+        if (hEl) hEl.textContent = `含竞价量 ${qDays} 天｜共 ${total} 条｜存于 IndexedDB`;
     } catch (e) { /* 忽略 */ }
 }
 
 let snapBusy = false;
+// 快照不再自己去抓行情，而是把「主页此刻显示的数据」原样存一份。
+// 这样快照和主页天然一致——快照就是主页的拷贝。
 async function snapCapture(manual) {
     if (snapBusy) return;
     snapBusy = true;
@@ -1191,44 +1198,52 @@ async function snapCapture(manual) {
         }
 
         snapSetUi('抓取中…', 'warn');
-        const res = await fetch(SNAP_API);
-        const json = await res.json();
-        if (json.rc !== 0 || !json.data?.diff) throw new Error('数据异常 rc=' + json.rc);
 
-        // 存「全市场」而不是只存竞价上涨的：回测需要对照池（含低开），
-        // 而且竞价量 f5 是日线数据里没有的，只有这里是唯一来源。
-        // 每行：[代码, 名称, 竞价涨幅%, 竞价量(手), 昨收, 今开]
-        const rows = [];
-        for (const s of json.data.diff) {
-            const name = String(s.f14 || '');
-            if (name.includes('ST')) continue;
-            const bid = Number(s.f615);
-            if (!Number.isFinite(bid)) continue;          // 无竞价数据
-            // f17 是今开价（= 集合竞价成交价），f18 是昨收；
-            // 注意不能用 f2，那是实时最新价，盘中一直在变。
-            const prev = Number(s.f18), open = Number(s.f17), vol = Number(s.f5);
-            if (!(prev > 0) || !(vol > 0) || !(open > 0)) continue;   // 停牌/无成交
-
-            const code = String(s.f12 || '');
-            let lim = 10;
-            if (/^(300|301|688|689)/.test(code)) lim = 20;
-            else if (/^[48]/.test(code)) lim = 30;
-            if (bid >= lim - 0.2 || bid <= -lim + 0.2) continue;      // 一字涨跌停，无实际成交
-
-            rows.push([code, name, +bid.toFixed(2), Math.round(vol), +prev.toFixed(2), +open.toFixed(2)]);
+        // 主页数据还没加载好，就先拉一次
+        if (!cachedTopList.length) {
+            await fetchTopPanel();
+            await fetchBotPanel();
         }
-
-        // 是否交易日：全市场总条数够多才算，避免把节假日残留存进来
-        const total = Number(json.data.total) || 0;
-        if (total < 3000 || rows.length < 500) {
-            snapSetUi(`样本仅 ${rows.length} 只（全市场 ${total}），疑似非交易日`, 'warn');
-            if (manual) showToast(`样本不足（${rows.length} 只），未保存`, 'error');
+        if (!cachedTop3.length && !cachedTopList.length) {
+            snapSetUi('主页数据未就绪，稍后自动重试', 'warn');
+            if (manual) showToast('主页数据未就绪，请等页面加载完再点', 'error');
             return;
         }
 
-        await idbPut({ date: dk, t: snapClock(dt), q: inWin ? 1 : 0, n: rows.length, rows });
-        snapSetUi(inWin ? `已记录 ${rows.length} 只（含竞价量）` : `已补抓 ${rows.length} 只（量不准）`, 'ok');
-        if (manual) showToast(`快照已记录 ${rows.length} 只`, 'success');
+        // 左侧前三（卡片的顺序就是主页的顺序）
+        const left = cachedTop3.map((x, i) => ({
+            rank: i + 1,
+            code: x.code,
+            name: x.name,
+            bid: +Number(x.bidChange).toFixed(2),
+            score: x.score,
+            cov: x.coverage,
+        }));
+
+        // 右侧候选（存全部，不止当前显示的那几只）
+        const right = cachedTopList.map((x, i) => ({
+            rank: i + 1,
+            code: x.code,
+            name: x.name,
+            bid: +Number(x.bidChange).toFixed(2),
+            real: +Number(x.realChange).toFixed(2),
+            vr: +Number(x.volumeRatio).toFixed(2),
+            score: x.score,
+            cov: x.coverage,
+            ind: x.industry || '',
+        }));
+
+        if (!left.length && !right.length) {
+            snapSetUi('主页没有可存的股票', 'warn');
+            if (manual) showToast('主页暂无数据', 'error');
+            return;
+        }
+
+        await idbPut({ date: dk, t: snapClock(dt), q: inWin ? 1 : 0, left, right });
+
+        const msg = `已存 左${left.length}只 / 右${right.length}只`;
+        snapSetUi(msg + (inWin ? '（含竞价量）' : '（量不准）'), 'ok');
+        if (manual) showToast(msg, 'success');
         await snapRefreshStats();
     } catch (e) {
         snapSetUi('抓取失败：' + ((e && e.message) || e), 'warn');
@@ -1304,32 +1319,26 @@ async function snapShowData() {
 
 
         let html = '<table><thead><tr>'
-            + '<th>日期</th><th>抓取时间</th><th>类型</th><th>记录条数</th><th>竞价上涨</th><th>最高竞价涨幅</th>'
+            + '<th>日期</th><th>抓取时间</th><th>类型</th><th>左侧榜</th><th>右侧榜</th>'
             + '</tr></thead><tbody>';
         let totRows = 0;
         for (const d of all) {
-            const rows = d.rows || [];
-            let up = 0, maxBid = -Infinity;
-            const bi = rows.length && rows[0].length >= 6 ? 2 : 1;   // 竞价涨幅所在下标
-            for (let i = 0; i < rows.length; i++) {
-                const b = rows[i][bi];
-                if (b > 0) up++;
-                if (b > maxBid) maxBid = b;
-            }
-            const n = d.n || rows.length;
-            totRows += n;
+            const L = (d.left || []).length;
+            const R = (d.right || []).length;
+            const legacy = !L && !R;
+            if (legacy) totRows += (d.n || (d.rows || []).length);
+            else totRows += L + R;
             html += `<tr class="snap-clickable" data-date="${d.date}">
                 <td>${d.date}</td>
                 <td>${d.t || '-'}</td>
                 <td class="${d.q === 1 ? 'snap-q1' : 'snap-q0'}">${d.q === 1 ? '含竞价量' : '仅涨幅'}</td>
-                <td>${n}</td>
-                <td>${up}</td>
-                <td>${Number.isFinite(maxBid) ? maxBid.toFixed(2) + '%' : '-'}</td>
+                <td>${legacy ? '—' : L + ' 只'}</td>
+                <td>${legacy ? (d.n || 0) + ' 条（旧格式）' : R + ' 只'}</td>
             </tr>`;
         }
         html += '</tbody></table>';
         list.innerHTML = html;
-        foot.textContent = `合计 ${totRows} 条竞价记录`;
+        foot.textContent = `合计 ${totRows} 条记录`;
     } catch (e) {
         list.innerHTML = `<div style="padding:20px;color:#f87171">读取失败：${(e && e.message) || e}</div>`;
     }
@@ -1339,56 +1348,90 @@ async function snapShowData() {
 let snapDayRec = null;          // 当前查看的那天
 let snapDayLimit = 200;         // 一次显示多少行
 
-function snapRowFields(r) {
-    // 兼容旧格式（5 元素，无名称）
-    if (r.length >= 6) {
-        return { code: r[0], name: r[1], bid: r[2], vol: r[3], prev: r[4], open: r[5] };
-    }
-    return { code: r[0], name: '', bid: r[1], vol: r[2], prev: r[3], open: r[4] };
-}
-
 function snapRenderDay() {
     const list = document.getElementById('snapDayList');
     const foot = document.getElementById('snapDayFoot');
     const cnt = document.getElementById('snapDayCount');
+    const moreBtn = document.getElementById('snapDayMore');
+    const cb = document.getElementById('snapDayOnlyUp');
     if (!snapDayRec || !list) return;
 
-    const onlyUp = document.getElementById('snapDayOnlyUp')?.checked;
-    let items = (snapDayRec.rows || []).map(snapRowFields);
-    const total = items.length;
-    if (onlyUp) items = items.filter(x => x.bid > 0);
+    const onlyUp = !!(cb && cb.checked);
+    let html = '';
 
-    // 按竞价涨幅降序
+    // 新格式：left / right 两张表，内容与主页一一对应
+    if (snapDayRec.left || snapDayRec.right) {
+        const L = (snapDayRec.left || []).filter(x => !onlyUp || x.bid > 0);
+        const R = (snapDayRec.right || []).filter(x => !onlyUp || x.bid > 0);
+
+        html += '<div class="snap-sec-title">左侧榜（综合分，最多 3 只）</div>';
+        if (!L.length) {
+            html += '<div class="snap-empty-row">无</div>';
+        } else {
+            html += '<table class="snap-table-day"><thead><tr>'
+                + '<th>#</th><th>代码</th><th>名称</th><th>竞价涨幅</th><th>综合分</th><th>完整度</th>'
+                + '</tr></thead><tbody>';
+            for (const x of L) {
+                const cls = x.bid > 0 ? 'snap-up' : (x.bid < 0 ? 'snap-down' : '');
+                html += `<tr><td>${x.rank}</td><td>${x.code}</td><td>${x.name || '—'}</td>`
+                    + `<td class="${cls}">${x.bid > 0 ? '+' : ''}${Number(x.bid).toFixed(2)}%</td>`
+                    + `<td>${x.score}</td><td>${x.cov}%</td></tr>`;
+            }
+            html += '</tbody></table>';
+        }
+
+        html += '<div class="snap-sec-title">右侧榜（共 ' + (snapDayRec.right || []).length + ' 只）</div>';
+        if (!R.length) {
+            html += '<div class="snap-empty-row">无</div>';
+        } else {
+            html += '<table class="snap-table-day"><thead><tr>'
+                + '<th>#</th><th>代码</th><th>名称</th><th>竞价涨幅</th><th>实时涨幅</th>'
+                + '<th>量比</th><th>综合分</th><th>完整度</th><th>行业</th>'
+                + '</tr></thead><tbody>';
+            for (const x of R) {
+                const bcls = x.bid > 0 ? 'snap-up' : (x.bid < 0 ? 'snap-down' : '');
+                const rcls = Number(x.real) < Number(x.bid) ? 'snap-down' : (Number(x.real) > 0 ? 'snap-up' : 'snap-down');
+                html += `<tr><td>${x.rank}</td><td>${x.code}</td><td>${x.name || '—'}</td>`
+                    + `<td class="${bcls}">${x.bid > 0 ? '+' : ''}${Number(x.bid).toFixed(2)}%</td>`
+                    + `<td class="${rcls}">${Number(x.real) > 0 ? '+' : ''}${Number(x.real).toFixed(2)}%</td>`
+                    + `<td>${Number(x.vr).toFixed(2)}</td>`
+                    + `<td>${x.score}</td><td>${x.cov}%</td><td>${x.ind || '—'}</td></tr>`;
+            }
+            html += '</tbody></table>';
+        }
+
+        list.innerHTML = html;
+        if (cnt) cnt.textContent = `左 ${L.length} 只 / 右 ${R.length} 只`;
+        if (foot) foot.textContent = snapDayRec.q === 1 ? '含竞价量' : '竞价量不可靠（补抓）';
+        if (moreBtn) moreBtn.style.display = 'none';
+        return;
+    }
+
+    // 旧格式（早期版本存的全市场 rows），保留兼容
+    const rows = snapDayRec.rows || [];
+    let items = rows.map(r => (r.length >= 6
+        ? { code: r[0], name: r[1], bid: r[2], vol: r[3], prev: r[4], open: r[5] }
+        : { code: r[0], name: '', bid: r[1], vol: r[2], prev: r[3], open: r[4] }));
+    if (onlyUp) items = items.filter(x => x.bid > 0);
     items.sort((a, b) => b.bid - a.bid);
     const shown = items.slice(0, snapDayLimit);
 
-    let html = '<table class="snap-table-day"><thead><tr>'
+    html = '<table class="snap-table-day"><thead><tr>'
         + '<th>代码</th><th>名称</th><th>竞价涨幅</th><th>竞价量(手)</th>'
         + '<th>昨收</th><th>今开</th><th>竞价金额(万)</th>'
         + '</tr></thead><tbody>';
     for (const x of shown) {
         const cls = x.bid > 0 ? 'snap-up' : (x.bid < 0 ? 'snap-down' : '');
-        const sign = x.bid > 0 ? '+' : '';
-        const amt = (x.vol * 100 * x.open) / 10000;
-        html += `<tr>
-            <td>${x.code}</td>
-            <td>${x.name || '—'}</td>
-            <td class="${cls}">${sign}${x.bid.toFixed(2)}%</td>
-            <td>${x.vol.toLocaleString()}</td>
-            <td>${x.prev.toFixed(2)}</td>
-            <td>${x.open.toFixed(2)}</td>
-            <td>${amt.toFixed(0)}</td>
-        </tr>`;
+        html += `<tr><td>${x.code}</td><td>${x.name || '—'}</td>`
+            + `<td class="${cls}">${x.bid > 0 ? '+' : ''}${Number(x.bid).toFixed(2)}%</td>`
+            + `<td>${Number(x.vol).toLocaleString()}</td><td>${Number(x.prev).toFixed(2)}</td>`
+            + `<td>${Number(x.open).toFixed(2)}</td><td>${((x.vol * 100 * x.open) / 10000).toFixed(0)}</td></tr>`;
     }
     html += '</tbody></table>';
-    if (!items.length) {
-        html = '<div style="padding:20px;color:#8b96ab">没有符合条件的记录</div>';
-    }
+    if (!items.length) html = '<div class="snap-empty-row">没有符合条件的记录</div>';
     list.innerHTML = html;
-
-    if (cnt) cnt.textContent = `共 ${items.length} 只${onlyUp ? '（已过滤低开）' : ''}，显示前 ${shown.length}`;
-    if (foot) foot.textContent = `原始 ${total} 条${snapDayRec.q === 1 ? '｜含竞价量' : '｜竞价量不可靠（补抓）'}`;
-    const moreBtn = document.getElementById('snapDayMore');
+    if (cnt) cnt.textContent = `共 ${items.length} 条${onlyUp ? '（已过滤低开）' : ''}，显示前 ${shown.length}`;
+    if (foot) foot.textContent = `旧格式数据｜${snapDayRec.q === 1 ? '含竞价量' : '竞价量不可靠'}`;
     if (moreBtn) {
         moreBtn.style.display = shown.length < items.length ? '' : 'none';
         moreBtn.textContent = `显示更多（还有 ${items.length - shown.length}）`;
