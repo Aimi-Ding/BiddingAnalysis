@@ -463,6 +463,19 @@
             display: flex; justify-content: space-between; align-items: center;
             padding-top: 10px; border-top: 1px solid #2c3446; font-size: 12px; color: #8b96ab;
         }
+        #snapListView { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+        .snap-day-bar {
+            display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+            padding: 8px 0; border-bottom: 1px solid #2c3446; font-size: 12px;
+        }
+        .snap-day-title { font-weight: 700; color: #eef2ff; }
+        .snap-day-filter { display: flex; align-items: center; gap: 5px; color: #97a3ba; cursor: pointer; }
+        .snap-day-count { color: #8b96ab; margin-left: auto; }
+        .snap-clickable { cursor: pointer; }
+        .snap-clickable:hover td { background: rgba(90,140,255,0.10) !important; }
+        .snap-table-day td:nth-child(2) { color: #8b96ab; }
+        .snap-up { color: #f87171; }
+        .snap-down { color: #4ade80; }
     </style>
 </head>
 <body>
@@ -488,11 +501,31 @@
             <span><i class="fa fa-list"></i> 已积累的竞价快照</span>
             <button class="snap-btn" id="snapModalClose">关闭</button>
         </div>
-        <div class="snap-modal-sub" id="snapModalSub">—</div>
-        <div class="snap-modal-list" id="snapModalList"></div>
-        <div class="snap-modal-foot">
-            <span id="snapModalFoot"></span>
-            <button class="snap-btn" id="snapModalExport">导出全部</button>
+        <!-- 视图一：已积累的日期列表 -->
+        <div id="snapListView">
+            <div class="snap-modal-sub" id="snapModalSub">—</div>
+            <div class="snap-modal-list" id="snapModalList"></div>
+            <div class="snap-modal-foot">
+                <span id="snapModalFoot"></span>
+                <button class="snap-btn" id="snapModalExport">导出全部</button>
+            </div>
+        </div>
+
+        <!-- 视图二：某一天的股票明细 -->
+        <div id="snapDayView" style="display:none; flex-direction:column; flex:1; min-height:0;">
+            <div class="snap-day-bar">
+                <button class="snap-btn" id="snapDayBack">← 返回</button>
+                <span id="snapDayTitle" class="snap-day-title"></span>
+                <label class="snap-day-filter">
+                    <input type="checkbox" id="snapDayOnlyUp"> 只看竞价上涨
+                </label>
+                <span id="snapDayCount" class="snap-day-count"></span>
+            </div>
+            <div class="snap-modal-list" id="snapDayList"></div>
+            <div class="snap-modal-foot">
+                <span id="snapDayFoot"></span>
+                <button class="snap-btn" id="snapDayMore">显示更多</button>
+            </div>
         </div>
     </div>
 </div>
@@ -1159,7 +1192,7 @@ async function snapCapture(manual) {
 
         // 存「全市场」而不是只存竞价上涨的：回测需要对照池（含低开），
         // 而且竞价量 f5 是日线数据里没有的，只有这里是唯一来源。
-        // 每行：[代码, 竞价涨幅%, 竞价量(手), 昨收, 竞价成交价]
+        // 每行：[代码, 名称, 竞价涨幅%, 竞价量(手), 昨收, 今开]
         const rows = [];
         for (const s of json.data.diff) {
             const name = String(s.f14 || '');
@@ -1177,7 +1210,7 @@ async function snapCapture(manual) {
             else if (/^[48]/.test(code)) lim = 30;
             if (bid >= lim - 0.2 || bid <= -lim + 0.2) continue;      // 一字涨跌停，无实际成交
 
-            rows.push([code, +bid.toFixed(2), Math.round(vol), +prev.toFixed(2), +open.toFixed(2)]);
+            rows.push([code, name, +bid.toFixed(2), Math.round(vol), +prev.toFixed(2), +open.toFixed(2)]);
         }
 
         // 是否交易日：全市场总条数够多才算，避免把节假日残留存进来
@@ -1265,14 +1298,15 @@ async function snapShowData() {
         for (const d of all) {
             const rows = d.rows || [];
             let up = 0, maxBid = -Infinity;
+            const bi = rows.length && rows[0].length >= 6 ? 2 : 1;   // 竞价涨幅所在下标
             for (let i = 0; i < rows.length; i++) {
-                const b = rows[i][1];
+                const b = rows[i][bi];
                 if (b > 0) up++;
                 if (b > maxBid) maxBid = b;
             }
             const n = d.n || rows.length;
             totRows += n;
-            html += `<tr>
+            html += `<tr class="snap-clickable" data-date="${d.date}">
                 <td>${d.date}</td>
                 <td>${d.t || '-'}</td>
                 <td class="${d.q === 1 ? 'snap-q1' : 'snap-q0'}">${d.q === 1 ? '含竞价量' : '仅涨幅'}</td>
@@ -1287,6 +1321,91 @@ async function snapShowData() {
     } catch (e) {
         list.innerHTML = `<div style="padding:20px;color:#f87171">读取失败：${(e && e.message) || e}</div>`;
     }
+}
+
+// ---- 某一天的股票明细 ----
+let snapDayRec = null;          // 当前查看的那天
+let snapDayLimit = 200;         // 一次显示多少行
+
+function snapRowFields(r) {
+    // 兼容旧格式（5 元素，无名称）
+    if (r.length >= 6) {
+        return { code: r[0], name: r[1], bid: r[2], vol: r[3], prev: r[4], open: r[5] };
+    }
+    return { code: r[0], name: '', bid: r[1], vol: r[2], prev: r[3], open: r[4] };
+}
+
+function snapRenderDay() {
+    const list = document.getElementById('snapDayList');
+    const foot = document.getElementById('snapDayFoot');
+    const cnt = document.getElementById('snapDayCount');
+    if (!snapDayRec || !list) return;
+
+    const onlyUp = document.getElementById('snapDayOnlyUp')?.checked;
+    let items = (snapDayRec.rows || []).map(snapRowFields);
+    const total = items.length;
+    if (onlyUp) items = items.filter(x => x.bid > 0);
+
+    // 按竞价涨幅降序
+    items.sort((a, b) => b.bid - a.bid);
+    const shown = items.slice(0, snapDayLimit);
+
+    let html = '<table class="snap-table-day"><thead><tr>'
+        + '<th>代码</th><th>名称</th><th>竞价涨幅</th><th>竞价量(手)</th>'
+        + '<th>昨收</th><th>今开</th><th>竞价金额(万)</th>'
+        + '</tr></thead><tbody>';
+    for (const x of shown) {
+        const cls = x.bid > 0 ? 'snap-up' : (x.bid < 0 ? 'snap-down' : '');
+        const sign = x.bid > 0 ? '+' : '';
+        const amt = (x.vol * 100 * x.open) / 10000;
+        html += `<tr>
+            <td>${x.code}</td>
+            <td>${x.name || '—'}</td>
+            <td class="${cls}">${sign}${x.bid.toFixed(2)}%</td>
+            <td>${x.vol.toLocaleString()}</td>
+            <td>${x.prev.toFixed(2)}</td>
+            <td>${x.open.toFixed(2)}</td>
+            <td>${amt.toFixed(0)}</td>
+        </tr>`;
+    }
+    html += '</tbody></table>';
+    if (!items.length) {
+        html = '<div style="padding:20px;color:#8b96ab">没有符合条件的记录</div>';
+    }
+    list.innerHTML = html;
+
+    if (cnt) cnt.textContent = `共 ${items.length} 只${onlyUp ? '（已过滤低开）' : ''}，显示前 ${shown.length}`;
+    if (foot) foot.textContent = `原始 ${total} 条${snapDayRec.q === 1 ? '｜含竞价量' : '｜竞价量不可靠（补抓）'}`;
+    const moreBtn = document.getElementById('snapDayMore');
+    if (moreBtn) {
+        moreBtn.style.display = shown.length < items.length ? '' : 'none';
+        moreBtn.textContent = `显示更多（还有 ${items.length - shown.length}）`;
+    }
+}
+
+async function snapOpenDay(date) {
+    try {
+        const rec = await idbGet(date);
+        if (!rec) { showToast('该日期无数据', 'error'); return; }
+        snapDayRec = rec;
+        snapDayLimit = 200;
+        document.getElementById('snapListView').style.display = 'none';
+        const dv = document.getElementById('snapDayView');
+        dv.style.display = 'flex';
+        const t = document.getElementById('snapDayTitle');
+        if (t) t.textContent = `${rec.date}  ${rec.t || ''}`;
+        const cb = document.getElementById('snapDayOnlyUp');
+        if (cb) cb.checked = false;
+        snapRenderDay();
+    } catch (e) {
+        showToast('读取失败：' + ((e && e.message) || e), 'error');
+    }
+}
+
+function snapBackToList() {
+    document.getElementById('snapDayView').style.display = 'none';
+    document.getElementById('snapListView').style.display = 'flex';
+    snapDayRec = null;
 }
 
 async function snapTick() {
@@ -1328,6 +1447,19 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (modalClose) modalClose.onclick = () => modal.classList.remove('open');
     if (modalExport) modalExport.onclick = snapExport;
     if (modal) modal.onclick = (ev) => { if (ev.target === modal) modal.classList.remove('open'); };
+
+    // 日期列表点击 → 进入当天明细（事件委托，列表是动态生成的）
+    const listEl = document.getElementById('snapModalList');
+    if (listEl) listEl.onclick = (ev) => {
+        const tr = ev.target.closest('tr[data-date]');
+        if (tr) snapOpenDay(tr.getAttribute('data-date'));
+    };
+    const backBtn = document.getElementById('snapDayBack');
+    if (backBtn) backBtn.onclick = snapBackToList;
+    const onlyUp = document.getElementById('snapDayOnlyUp');
+    if (onlyUp) onlyUp.onchange = () => { snapDayLimit = 200; snapRenderDay(); };
+    const moreBtn = document.getElementById('snapDayMore');
+    if (moreBtn) moreBtn.onclick = () => { snapDayLimit += 200; snapRenderDay(); };
     await snapRefreshStats();
     await snapTick();
     setInterval(snapTick, 10000);
