@@ -1119,11 +1119,12 @@ const SNAP_API = 'https://push2dycalc.eastmoney.com/api/qt/clist/get'
     + '&fid=f615&po=1&pn=1&pz=6000&np=1';   // 与主页同口径；取全量所以排序不影响结果
 
 // 复盘用：需要 f2（收盘价）。收盘后 f2 即为当日收盘价。
-// 取 150 只，剔除数据缺失后仍能凑够 100 只。
+// 必须拉全市场：复盘对象是「主页当时筛选后的那批」，它们的竞价涨幅
+// 可能只有零点几个点、排名在几百名开外，只取前 150 会匹配不到。
 const REVIEW_API = 'https://push2dycalc.eastmoney.com/api/qt/clist/get'
     + '?fs=m:1+t:2,m:1+t:23,m:0+t:6,m:0+t:80'
     + '&fltt=2&invt=2&fields=f2,f12,f14,f17,f18,f615'
-    + '&fid=f615&po=1&pn=1&pz=150&np=1';
+    + '&fid=f615&po=1&pn=1&pz=6000&np=1';
 
 const SNAP_DB = 'auction_snapshots';
 const SNAP_STORE = 'days';
@@ -1343,6 +1344,23 @@ async function reviewCapture(manual) {
         }
 
         reviewSetUi('复盘计算中…', 'warn');
+
+        // 【核心】复盘对象必须和主页那一版完全一致，所以优先读当天的快照。
+        // 快照存的就是 9:25:30 那一刻主页显示的左侧榜 + 右侧榜。
+        const snapRec = await idbGet(dk, SNAP_STORE);
+        const targets = [];
+        const seen = new Set();
+        let sourceLabel = '';
+        if (snapRec && (snapRec.left || snapRec.right)) {
+            for (const x of [...(snapRec.left || []), ...(snapRec.right || [])]) {
+                if (x && x.code && !seen.has(x.code)) {
+                    seen.add(x.code);
+                    targets.push({ code: x.code, name: x.name || '', bid: x.bid });
+                }
+            }
+            sourceLabel = `主页快照（${snapRec.t || ''}）`;
+        }
+
         const res = await fetch(REVIEW_API);
         const json = await res.json();
         if (json.rc !== 0 || !json.data?.diff) throw new Error('数据异常 rc=' + json.rc);
@@ -1350,29 +1368,55 @@ async function reviewCapture(manual) {
         const total = Number(json.data.total) || 0;
         if (total < 3000) throw new Error('全市场数据不足，可能非交易日');
 
-        const items = [];
+        // 建立 代码 → 行情 索引
+        const quote = new Map();
         for (const x of json.data.diff) {
-            const code = String(x.f12 || '');
-            const name = String(x.f14 || '');
-            const bid = Number(x.f615);
-            const open = Number(x.f17);
-            const close = Number(x.f2);
-            const prev = Number(x.f18);
-            if (!code || !Number.isFinite(bid)) continue;
-            if (!(open > 0) || !(close > 0) || !(prev > 0)) continue;
-
-            const ret = (close / open - 1) * 100;
-            items.push({
-                code, name,
-                bid: +bid.toFixed(2),
-                open: +open.toFixed(2),
-                close: +close.toFixed(2),
-                ret: +ret.toFixed(2),
-            });
-            if (items.length >= 100) break;      // 只取前 100
+            quote.set(String(x.f12 || ''), x);
         }
 
-        if (items.length < 50) throw new Error(`只拿到 ${items.length} 只，数据不完整`);
+        const items = [];
+        let missing = 0;
+
+        if (targets.length) {
+            // 按快照里的股票逐只取行情
+            for (const t of targets) {
+                const q = quote.get(t.code);
+                if (!q) { missing++; continue; }
+                const open = Number(q.f17);
+                const close = Number(q.f2);
+                if (!(open > 0) || !(close > 0)) { missing++; continue; }
+                items.push({
+                    code: t.code,
+                    name: t.name || String(q.f14 || ''),
+                    bid: +Number(q.f615 || t.bid || 0).toFixed(2),
+                    open: +open.toFixed(2),
+                    close: +close.toFixed(2),
+                    ret: +((close / open - 1) * 100).toFixed(2),
+                });
+            }
+            if (!items.length) throw new Error('快照里的股票都没匹配到行情');
+        } else {
+            // 没有快照记录（当天没开页面），退回用竞价涨幅前 100
+            for (const x of json.data.diff) {
+                const code = String(x.f12 || '');
+                const bid = Number(x.f615);
+                const open = Number(x.f17);
+                const close = Number(x.f2);
+                if (!code || !Number.isFinite(bid)) continue;
+                if (!(open > 0) || !(close > 0)) continue;
+                items.push({
+                    code, name: String(x.f14 || ''),
+                    bid: +bid.toFixed(2),
+                    open: +open.toFixed(2),
+                    close: +close.toFixed(2),
+                    ret: +((close / open - 1) * 100).toFixed(2),
+                });
+                if (items.length >= 100) break;
+            }
+            sourceLabel = '竞价涨幅前100（当天无快照）';
+        }
+
+        if (!items.length) throw new Error('没有可复盘的股票');
 
         const up = items.filter(x => x.ret > 0).length;
         const flat = items.filter(x => x.ret === 0).length;
@@ -1383,6 +1427,8 @@ async function reviewCapture(manual) {
             date: dk,
             t: snapClock(dt),
             afterClose: dt.getHours() >= 15,
+            source: sourceLabel,
+            missing,
             n: items.length,
             up, down, flat, rate,
             avgRet: +(items.reduce((a, x) => a + x.ret, 0) / items.length).toFixed(2),
@@ -1508,11 +1554,13 @@ function revRender(idx) {
     if (rec.rate < 40) cls += ' low';
     else if (rec.rate < 60) cls += ' mid';
 
+    const missTxt = rec.missing ? `　${rec.missing} 只无行情` : '';
     summary.innerHTML = `<div class="${cls}">${rec.rate}%</div>
         <div class="rev-stats">
             <div>成功率（收盘价 > 开盘价）</div>
-            <div><b class="snap-up">涨 ${rec.up}</b>　<b class="snap-down">跌 ${rec.down}</b>　平 ${rec.flat}　共 ${rec.n} 只</div>
+            <div><b class="snap-up">涨 ${rec.up}</b>　<b class="snap-down">跌 ${rec.down}</b>　平 ${rec.flat}　共 ${rec.n} 只${missTxt}</div>
             <div>平均收益 <b>${rec.avgRet > 0 ? '+' : ''}${rec.avgRet}%</b></div>
+            <div style="color:#6b7688">复盘对象：${rec.source || '竞价前100'}</div>
         </div>`;
 
     const items = rec.items || [];
