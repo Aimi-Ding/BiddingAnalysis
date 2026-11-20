@@ -481,6 +481,16 @@
             margin: 10px 0 6px; padding-left: 6px; border-left: 3px solid #4a5a7a;
         }
         .snap-empty-row { padding: 10px 6px; color: #6b7688; font-size: 12px; }
+        .snap-divider { height: 1px; background: #2c3446; margin: 8px 0; }
+        .rev-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 0; }
+        .rev-bar-info { font-size: 12px; color: #8b96ab; margin-left: auto; }
+        .rev-summary { display: flex; gap: 18px; align-items: baseline; flex-wrap: wrap; padding: 10px 0 12px; }
+        .rev-rate-big { font-size: 34px; font-weight: 800; color: #f87171; line-height: 1; }
+        .rev-rate-big.mid { color: #fbbf24; }
+        .rev-rate-big.low { color: #4ade80; }
+        .rev-stats { font-size: 12px; color: #97a3ba; line-height: 1.7; }
+        .rev-stats b { color: #eaf0ff; }
+        .rev-legend { font-size: 11px; }
     </style>
 </head>
 <body>
@@ -490,13 +500,38 @@
     <div class="snap-row">已记录 <b id="snapDays">0</b> 个交易日</div>
     <div class="snap-row">最新：<span id="snapLast">—</span></div>
     <div class="snap-row">状态：<span id="snapState" class="snap-state-off">等待 9:25</span></div>
+    <div class="snap-divider"></div>
+    <div class="snap-row">复盘 <b id="revDays">0</b> 天 · 最新 <span id="revLast">—</span> · 成功率 <b id="revRate">—</b></div>
+    <div class="snap-row">状态：<span id="revState" class="snap-state-off">等待收盘</span></div>
     <div class="snap-btns">
         <button class="snap-btn primary" id="snapNowBtn">立即抓取</button>
         <button class="snap-btn" id="snapViewBtn">查看数据</button>
+        <button class="snap-btn" id="revViewBtn">复盘</button>
         <button class="snap-btn" id="snapExportBtn">导出</button>
         <button class="snap-btn danger" id="snapClearBtn">清空</button>
     </div>
     <div class="snap-hint" id="snapHint">9:25–9:30 自动抓取（此时含竞价量）；其余时间只能补抓竞价涨幅</div>
+</div>
+
+<!-- 每日复盘（点「复盘」打开） -->
+<div class="snap-modal" id="revModal">
+    <div class="snap-modal-body">
+        <div class="snap-modal-head">
+            <span><i class="fa fa-balance-scale"></i> 每日复盘</span>
+            <button class="snap-btn" id="revModalClose">关闭</button>
+        </div>
+        <div class="rev-bar">
+            <select id="revDateSelect" class="snap-btn" style="padding:4px 8px;"></select>
+            <button class="snap-btn" id="revRunBtn">重新生成</button>
+            <span id="revBarInfo" class="rev-bar-info"></span>
+        </div>
+        <div id="revSummary" class="rev-summary"></div>
+        <div class="snap-modal-list" id="revList"></div>
+        <div class="snap-modal-foot">
+            <span id="revFoot"></span>
+            <span class="rev-legend"><span class="snap-up">■ 涨</span>　<span class="snap-down">■ 跌</span>　■ 平</span>
+        </div>
+    </div>
 </div>
 
 <!-- 已积累数据明细（点「查看数据」打开） -->
@@ -1083,59 +1118,81 @@ const SNAP_API = 'https://push2dycalc.eastmoney.com/api/qt/clist/get'
     + '&fltt=2&invt=2&fields=f5,f12,f14,f17,f18,f615'
     + '&fid=f615&po=1&pn=1&pz=6000&np=1';   // 与主页同口径；取全量所以排序不影响结果
 
+// 复盘用：需要 f2（收盘价）。收盘后 f2 即为当日收盘价。
+// 取 150 只，剔除数据缺失后仍能凑够 100 只。
+const REVIEW_API = 'https://push2dycalc.eastmoney.com/api/qt/clist/get'
+    + '?fs=m:1+t:2,m:1+t:23,m:0+t:6,m:0+t:80'
+    + '&fltt=2&invt=2&fields=f2,f12,f14,f17,f18,f615'
+    + '&fid=f615&po=1&pn=1&pz=150&np=1';
+
 const SNAP_DB = 'auction_snapshots';
 const SNAP_STORE = 'days';
+const REVIEW_STORE = 'reviews';
 
 function idbOpen() {
     return new Promise((resolve, reject) => {
-        const req = indexedDB.open(SNAP_DB, 1);
+        const req = indexedDB.open(SNAP_DB, 2);
         req.onupgradeneeded = () => {
             const db = req.result;
             if (!db.objectStoreNames.contains(SNAP_STORE)) {
                 db.createObjectStore(SNAP_STORE, { keyPath: 'date' });
+            }
+            if (!db.objectStoreNames.contains(REVIEW_STORE)) {
+                db.createObjectStore(REVIEW_STORE, { keyPath: 'date' });
             }
         };
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error || new Error('IndexedDB 打开失败'));
     });
 }
-async function idbPut(rec) {
+async function idbPut(rec, store = SNAP_STORE) {
     const db = await idbOpen();
     await new Promise((resolve, reject) => {
-        const tx = db.transaction(SNAP_STORE, 'readwrite');
-        tx.objectStore(SNAP_STORE).put(rec);
+        const tx = db.transaction(store, 'readwrite');
+        tx.objectStore(store).put(rec);
         tx.oncomplete = resolve;
         tx.onerror = () => reject(tx.error);
     });
     db.close();
 }
-async function idbAll() {
+async function idbAll(store = SNAP_STORE) {
     const db = await idbOpen();
     const out = await new Promise((resolve, reject) => {
-        const tx = db.transaction(SNAP_STORE, 'readonly');
-        const req = tx.objectStore(SNAP_STORE).getAll();
+        const tx = db.transaction(store, 'readonly');
+        const req = tx.objectStore(store).getAll();
         req.onsuccess = () => resolve(req.result || []);
         req.onerror = () => reject(req.error);
     });
     db.close();
     return out;
 }
-async function idbGet(date) {
+async function idbGet(date, store = SNAP_STORE) {
     const db = await idbOpen();
     const out = await new Promise((resolve, reject) => {
-        const tx = db.transaction(SNAP_STORE, 'readonly');
-        const req = tx.objectStore(SNAP_STORE).get(date);
+        const tx = db.transaction(store, 'readonly');
+        const req = tx.objectStore(store).get(date);
         req.onsuccess = () => resolve(req.result || null);
         req.onerror = () => reject(req.error);
     });
     db.close();
     return out;
 }
-async function idbClear() {
+async function idbCount(store = SNAP_STORE) {
+    const db = await idbOpen();
+    const out = await new Promise((resolve, reject) => {
+        const tx = db.transaction(store, 'readonly');
+        const req = tx.objectStore(store).count();
+        req.onsuccess = () => resolve(req.result || 0);
+        req.onerror = () => reject(req.error);
+    });
+    db.close();
+    return out;
+}
+async function idbClear(store = SNAP_STORE) {
     const db = await idbOpen();
     await new Promise((resolve, reject) => {
-        const tx = db.transaction(SNAP_STORE, 'readwrite');
-        tx.objectStore(SNAP_STORE).clear();
+        const tx = db.transaction(store, 'readwrite');
+        tx.objectStore(store).clear();
         tx.oncomplete = resolve;
         tx.onerror = () => reject(tx.error);
     });
@@ -1259,6 +1316,231 @@ async function snapCapture(manual) {
     } finally {
         snapBusy = false;
     }
+}
+
+// ===================== 每日复盘 =====================
+// 取当天「竞价涨幅前 100」，按开盘价买入、收盘价卖出，看每只是涨还是跌。
+// 成功率 = 收盘价 > 开盘价 的只数 / 总只数。
+function reviewInWindow(dt) {
+    // 收盘 15:00，留 5 分钟等数据落定；到 16:00 之前都算收盘后
+    const h = dt.getHours();
+    return h >= 15 && h < 16;
+}
+
+let reviewBusy = false;
+const reviewFailedDates = new Set();   // 记录拉取失败的日期（多为节假日），避免反复请求
+async function reviewCapture(manual) {
+    if (reviewBusy) return;
+    reviewBusy = true;
+    const dt = snapNow();
+    const dk = snapDateKey(dt);
+
+    try {
+        const exist = await idbGet(dk, REVIEW_STORE);
+        if (exist && !manual) {
+            reviewSetUi(`今日已复盘（成功率 ${exist.rate}%）`, 'ok');
+            return;
+        }
+
+        reviewSetUi('复盘计算中…', 'warn');
+        const res = await fetch(REVIEW_API);
+        const json = await res.json();
+        if (json.rc !== 0 || !json.data?.diff) throw new Error('数据异常 rc=' + json.rc);
+
+        const total = Number(json.data.total) || 0;
+        if (total < 3000) throw new Error('全市场数据不足，可能非交易日');
+
+        const items = [];
+        for (const x of json.data.diff) {
+            const code = String(x.f12 || '');
+            const name = String(x.f14 || '');
+            const bid = Number(x.f615);
+            const open = Number(x.f17);
+            const close = Number(x.f2);
+            const prev = Number(x.f18);
+            if (!code || !Number.isFinite(bid)) continue;
+            if (!(open > 0) || !(close > 0) || !(prev > 0)) continue;
+
+            const ret = (close / open - 1) * 100;
+            items.push({
+                code, name,
+                bid: +bid.toFixed(2),
+                open: +open.toFixed(2),
+                close: +close.toFixed(2),
+                ret: +ret.toFixed(2),
+            });
+            if (items.length >= 100) break;      // 只取前 100
+        }
+
+        if (items.length < 50) throw new Error(`只拿到 ${items.length} 只，数据不完整`);
+
+        const up = items.filter(x => x.ret > 0).length;
+        const flat = items.filter(x => x.ret === 0).length;
+        const down = items.length - up - flat;
+        const rate = +((up / items.length) * 100).toFixed(1);
+
+        const rec = {
+            date: dk,
+            t: snapClock(dt),
+            afterClose: dt.getHours() >= 15,
+            n: items.length,
+            up, down, flat, rate,
+            avgRet: +(items.reduce((a, x) => a + x.ret, 0) / items.length).toFixed(2),
+            items,
+        };
+        await idbPut(rec, REVIEW_STORE);
+        reviewSetUi(`复盘完成：成功率 ${rate}%`, 'ok');
+        if (manual) showToast(`复盘完成，成功率 ${rate}%`, 'success');
+        await reviewRefreshStats();
+    } catch (e) {
+        reviewFailedDates.add(dk);
+        reviewSetUi('复盘失败：' + ((e && e.message) || e), 'warn');
+        if (manual) showToast('复盘失败：' + ((e && e.message) || e), 'error');
+    } finally {
+        reviewBusy = false;
+    }
+}
+
+// 每 10 秒检查一次：收盘后自动执行，周末跳过
+async function reviewTick() {
+    const dt = snapNow();
+    const dk = snapDateKey(dt);
+    if (!snapIsWeekday(dt)) { reviewSetUi('周末休市', 'off'); return; }
+
+    let has = null;
+    try { has = await idbGet(dk, REVIEW_STORE); } catch (e) { /* 忽略 */ }
+
+    if (reviewInWindow(dt)) {
+        if (!has) {
+            if (reviewFailedDates.has(dk)) {
+                reviewSetUi('今日无数据（非交易日？）', 'off');
+                return;
+            }
+            await reviewCapture(false);
+            return;
+        }
+        // 如果这份数据是收盘前生成的（收盘价其实是盘中价），收盘后要重算
+        const recHour = parseInt(String(has.t || '00:00:00').split(':')[0], 10);
+        if (!(recHour >= 15)) {
+            reviewSetUi('盘中数据，收盘后重算…', 'warn');
+            await reviewCapture(true);
+            return;
+        }
+        reviewSetUi(`今日已复盘（成功率 ${has.rate}%）`, 'ok');
+        return;
+    }
+
+    if (has) { reviewSetUi(`今日已复盘（成功率 ${has.rate}%）`, 'ok'); return; }
+
+    const h = dt.getHours();
+    if (h < 15) reviewSetUi('等待收盘（15:00 后自动复盘）', 'off');
+    else if (reviewFailedDates.has(dk)) reviewSetUi('今日无数据（非交易日？）', 'off');
+    else reviewSetUi('今日未复盘', 'warn');
+}
+
+function reviewSetUi(msg, cls) {
+    const el = document.getElementById('revState');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'snap-state-' + (cls || 'off');
+}
+
+async function reviewRefreshStats() {
+    const dEl = document.getElementById('revDays');
+    const lEl = document.getElementById('revLast');
+    const rEl = document.getElementById('revRate');
+    if (!dEl) return;
+    try {
+        const all = await idbAll(REVIEW_STORE);
+        all.sort((a, b) => (a.date < b.date ? -1 : 1));
+        dEl.textContent = all.length;
+        if (all.length) {
+            const last = all[all.length - 1];
+            lEl.textContent = last.date;
+            rEl.textContent = last.rate + '%';
+        } else {
+            lEl.textContent = '—';
+            rEl.textContent = '—';
+        }
+    } catch (e) { /* 忽略 */ }
+}
+
+// ---- 复盘界面 ----
+let revCache = [];
+
+async function revOpen() {
+    const modal = document.getElementById('revModal');
+    if (!modal) return;
+    modal.classList.add('open');
+    const list = document.getElementById('revList');
+    list.innerHTML = '<div style="padding:20px;color:#8b96ab">读取中…</div>';
+    try {
+        revCache = await idbAll(REVIEW_STORE);
+        revCache.sort((a, b) => (a.date < b.date ? 1 : -1));   // 最新在前
+        if (!revCache.length) {
+            document.getElementById('revDateSelect').innerHTML = '';
+            document.getElementById('revSummary').innerHTML = '';
+            list.innerHTML = '<div style="padding:20px;color:#8b96ab">还没有复盘数据。交易日收盘后（15:00）会自动生成，也可以点「重新生成」。</div>';
+            document.getElementById('revFoot').textContent = '';
+            document.getElementById('revBarInfo').textContent = '';
+            return;
+        }
+        const sel = document.getElementById('revDateSelect');
+        sel.innerHTML = revCache.map((x, i) =>
+            `<option value="${i}">${x.date}　成功率 ${x.rate}%</option>`).join('');
+        sel.value = '0';
+        sel.onchange = () => revRender(parseInt(sel.value, 10));
+        revRender(0);
+    } catch (e) {
+        list.innerHTML = `<div style="padding:20px;color:#f87171">读取失败：${(e && e.message) || e}</div>`;
+    }
+}
+
+function revRender(idx) {
+    const rec = revCache[idx];
+    if (!rec) return;
+    const summary = document.getElementById('revSummary');
+    const list = document.getElementById('revList');
+    const foot = document.getElementById('revFoot');
+    const info = document.getElementById('revBarInfo');
+
+    let cls = 'rev-rate-big';
+    if (rec.rate < 40) cls += ' low';
+    else if (rec.rate < 60) cls += ' mid';
+
+    summary.innerHTML = `<div class="${cls}">${rec.rate}%</div>
+        <div class="rev-stats">
+            <div>成功率（收盘价 > 开盘价）</div>
+            <div><b class="snap-up">涨 ${rec.up}</b>　<b class="snap-down">跌 ${rec.down}</b>　平 ${rec.flat}　共 ${rec.n} 只</div>
+            <div>平均收益 <b>${rec.avgRet > 0 ? '+' : ''}${rec.avgRet}%</b></div>
+        </div>`;
+
+    const items = rec.items || [];
+    let html = '<table class="snap-table-day"><thead><tr>'
+        + '<th>#</th><th>代码</th><th>名称</th><th>竞价涨幅</th><th>开盘价</th>'
+        + '<th>收盘价</th><th>开盘买→收盘卖</th>'
+        + '</tr></thead><tbody>';
+    for (let i = 0; i < items.length; i++) {
+        const x = items[i];
+        const r = Number(x.ret);
+        const k = r > 0 ? 'snap-up' : (r < 0 ? 'snap-down' : '');
+        const sgn = r > 0 ? '+' : '';
+        const bsgn = Number(x.bid) > 0 ? '+' : '';
+        html += `<tr>
+            <td>${i + 1}</td>
+            <td>${x.code}</td>
+            <td>${x.name || '—'}</td>
+            <td>${bsgn}${Number(x.bid).toFixed(2)}%</td>
+            <td>${Number(x.open).toFixed(2)}</td>
+            <td>${Number(x.close).toFixed(2)}</td>
+            <td class="${k}"><b>${sgn}${r.toFixed(2)}%</b></td>
+        </tr>`;
+    }
+    html += '</tbody></table>';
+    list.innerHTML = html;
+
+    if (foot) foot.textContent = `生成于 ${rec.t || '—'}`;
+    if (info) info.textContent = `共 ${revCache.length} 个交易日`;
 }
 
 async function snapExport() {
@@ -1523,9 +1805,24 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (onlyUp) onlyUp.onchange = () => { snapDayLimit = 200; snapRenderDay(); };
     const moreBtn = document.getElementById('snapDayMore');
     if (moreBtn) moreBtn.onclick = () => { snapDayLimit += 200; snapRenderDay(); };
+
+    // 复盘
+    const revBtn = document.getElementById('revViewBtn');
+    const revModal = document.getElementById('revModal');
+    const revClose = document.getElementById('revModalClose');
+    const revRun = document.getElementById('revRunBtn');
+    if (revBtn) revBtn.onclick = revOpen;
+    if (revClose) revClose.onclick = () => revModal.classList.remove('open');
+    if (revModal) revModal.onclick = (ev) => { if (ev.target === revModal) revModal.classList.remove('open'); };
+    if (revRun) revRun.onclick = async () => { await reviewCapture(true); await revOpen(); };
+
     await snapRefreshStats();
     await snapTick();
     setInterval(snapTick, 10000);
+
+    await reviewRefreshStats();
+    await reviewTick();
+    setInterval(reviewTick, 10000);
 });
 </script>
 </body>
