@@ -622,7 +622,12 @@
 // 【修复①】原版 fields 里没有 f20/f21/f6/f18：
 //   - 左侧打分读 stock.f20（成交额）却从未请求 → 恒为 0，12% 权重永远拿不到分
 //   - 右侧打分读 stock.f10 当流通市值 → f10 其实是量比，见【修复③】
-const STOCK_API = 'https://push2dycalc.eastmoney.com/api/qt/clist/get?fs=m:1+t:2,m:0+t:6,m:0+t:80&fltt=2&invt=2&fields=f2,f3,f4,f5,f6,f10,f12,f14,f18,f20,f21,f615,f630,f100,f102,f103&fid=f3&po=1&pn=1&pz=100&np=1&ut=c92c50e6b0fab2c17cd5e276e9a79c42';
+// 【修复⑤】取数池子改成「按竞价涨幅排序」，并且加上科创板，与快照接口口径一致。
+//   原先是 fid=f3（今日涨跌幅）只取前100：盘中 f3 是实时涨幅、f615 是竞价涨幅，
+//   两者差得很远（实测同一只股票能差 20 个百分点以上），导致主页看到的
+//   和快照里存的完全不是一批股票。改成 fid=f615 后，池子 = 竞价涨幅前 100。
+//   注意：pz 仍是 100，不拉全市场，接口自己按 f615 降序返回。
+const STOCK_API = 'https://push2dycalc.eastmoney.com/api/qt/clist/get?fs=m:1+t:2,m:1+t:23,m:0+t:6,m:0+t:80&fltt=2&invt=2&fields=f2,f3,f4,f5,f6,f10,f12,f14,f18,f20,f21,f615,f630,f100,f102,f103&fid=f615&po=1&pn=1&pz=100&np=1&ut=c92c50e6b0fab2c17cd5e276e9a79c42';
 let cachedTop3 = [];
 let isDataLockedTop = false;
 let cachedTopList = [];
@@ -1069,7 +1074,7 @@ window.addEventListener('DOMContentLoaded',async ()=>{
 const SNAP_API = 'https://push2dycalc.eastmoney.com/api/qt/clist/get'
     + '?fs=m:1+t:2,m:1+t:23,m:0+t:6,m:0+t:80'
     + '&fltt=2&invt=2&fields=f5,f12,f14,f17,f18,f615'
-    + '&fid=f3&po=1&pn=1&pz=6000&np=1';
+    + '&fid=f615&po=1&pn=1&pz=6000&np=1';   // 与主页同口径；取全量所以排序不影响结果
 
 const SNAP_DB = 'auction_snapshots';
 const SNAP_STORE = 'days';
