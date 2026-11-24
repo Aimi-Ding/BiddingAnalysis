@@ -539,7 +539,6 @@ connect-src 'self' https://push2dycalc.eastmoney.com;
                     </div>
                     <div class="right-group">
                         <div class="btn-group">
-                            <button id="exportTop3Btn" class="tdx-export-btn"><i class="fa fa-download"></i> 导出前三至通达信</button>
                             <button id="refreshLockedBtn" class="tdx-export-btn reset-lock-btn"><i class="fa fa-refresh"></i> 重新锁定(9:30数据)</button>
                         </div>
                         <div class="live-time" id="liveTimeDisplayTop">
@@ -573,7 +572,6 @@ connect-src 'self' https://push2dycalc.eastmoney.com;
                     </div>
                     <div class="right-group">
                         <div class="btn-group">
-                            <button id="exportTop10Btn" class="tdx-export-btn"><i class="fa fa-download"></i> 导出至通达信</button>
                             <button id="refreshLockedBtnBot" class="tdx-export-btn reset-lock-btn"><i class="fa fa-refresh"></i> 重新锁定(9:30前可用)</button>
                             <button id="refreshRealTimeBtn" class="tdx-export-btn real-time-btn"><i class="fa fa-refresh"></i> 刷新实时涨幅</button>
                             <button id="switchLinkBtn" class="tdx-export-btn switch-link-btn"><i class="fa fa-exchange"></i> 联动：通达信</button>
@@ -846,16 +844,6 @@ async function fetchTopPanel(force){
         wrap.innerHTML = `<div class="empty-state">获取失败 <br><button onclick="fetchTopPanel()" class="tdx-export-btn">重试</button></div>`;
     }
 }
-function exportTop3ToTdx(){
-    if(!cachedTop3.length){showToast("暂无数据");return;}
-    let str = "";
-    cachedTop3.forEach(item=>{
-        let m = item.code.startsWith('6')?'1':((item.code.startsWith('4')||item.code.startsWith('8'))?'2':'0');
-        str += `${m}#${item.code}|`;
-    });
-    str = str.slice(0,-1);
-    window.location.href=`http://www.treeid/AddToBlock_${str}`;
-}
 
 // ===================== 右侧面板 表格选股逻辑 =====================
 function computeAiProbabilityBot(stock) {
@@ -1019,17 +1007,6 @@ function reLockBot(){
     }
     relockAll();
 }
-function exportBotTdx(){
-    const list = cachedTopList.slice(0,showCount);
-    if(!list.length){showToast("暂无数据");return;}
-    let str = "";
-    list.forEach(item=>{
-        let m = item.code.startsWith('6')?'1':((item.code.startsWith('4')||item.code.startsWith('8'))?'2':'0');
-        str += `${m}#${item.code}|`;
-    });
-    str = str.slice(0,-1);
-    window.location.href=`http://www.treeid/AddToBlock_${str}`;
-}
 function changeShowCount(){
     const sel = document.getElementById('showCountSelect');
     showCount = parseInt(sel.value);
@@ -1042,14 +1019,12 @@ window.addEventListener('DOMContentLoaded',async ()=>{
     fetchBotPanel();
 
     // 左侧按钮
-    document.getElementById('exportTop3Btn').onclick = exportTop3ToTdx;
     document.getElementById('refreshLockedBtn').onclick = () => {
         if (!confirm('重新锁定会清空当天的快照锁，并按现在的行情重新抓取。继续？')) return;
         relockAll();
     };
 
     // 右侧按钮
-    document.getElementById('exportTop10Btn').onclick = exportBotTdx;
     document.getElementById('refreshLockedBtnBot').onclick = reLockBot;
     document.getElementById('refreshRealTimeBtn').onclick = refreshRealTimeBot;
     document.getElementById('switchLinkBtn').onclick = switchLinkMode;
