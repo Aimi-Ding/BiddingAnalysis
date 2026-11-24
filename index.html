@@ -179,7 +179,6 @@ connect-src 'self' https://push2dycalc.eastmoney.com;
             box-shadow: 0 20px 35px -12px rgba(0,0,0,0.5);
             position: relative;
             overflow: hidden;
-            cursor: pointer;
         }
         .stock-card:hover {
             transform: translateY(-5px);
@@ -365,11 +364,6 @@ connect-src 'self' https://push2dycalc.eastmoney.com;
         .up { color: #ff8a6f; }
         .down { color: #00c864; }
         .real-green { color: #00c864 !important; }
-        .code-click {
-            cursor: pointer;
-            color: #ffd700 !important;
-            font-weight: bold;
-        }
         .count-select {
             background: rgba(0,0,0,0.5);
             border: 1px solid #ff5c5c;
@@ -574,7 +568,6 @@ connect-src 'self' https://push2dycalc.eastmoney.com;
                         <div class="btn-group">
                             <button id="refreshLockedBtnBot" class="tdx-export-btn reset-lock-btn"><i class="fa fa-refresh"></i> 重新锁定(9:30前可用)</button>
                             <button id="refreshRealTimeBtn" class="tdx-export-btn real-time-btn"><i class="fa fa-refresh"></i> 刷新实时涨幅</button>
-                            <button id="switchLinkBtn" class="tdx-export-btn switch-link-btn"><i class="fa fa-exchange"></i> 联动：通达信</button>
                             <select id="showCountSelect" class="count-select">
                                 <option value="3">显示3只</option>
                                 <option value="5" selected>显示5只</option>
@@ -597,7 +590,7 @@ connect-src 'self' https://push2dycalc.eastmoney.com;
                     </div>
                 </div>
                 <div class="footnote">
-                    <i class="fa fa-bullhorn"></i> 无缓存自动执行1次选股并缓存 | 9:30后仅更新实时涨幅 | 实时涨幅＜竞价涨幅自动标绿 | 点击股票代码联动软件
+                    <i class="fa fa-bullhorn"></i> 无缓存自动执行1次选股并缓存 | 9:30后仅更新实时涨幅 | 实时涨幅＜竞价涨幅自动标绿
                 </div>
             </div>
         </div>
@@ -611,7 +604,6 @@ let cachedTop3 = [];
 let isDataLockedTop = false;
 let cachedTopList = [];
 let isDataCachedBot = false;
-let linkMode = 'tdx';
 let showCount = 5;
 
 // 当日快照锁：只在 localStorage 里留「今天」这一条，换天自动失效
@@ -787,9 +779,8 @@ function renderTop3(top3List) {
     top3List.forEach((item, idx) => {
         let sign = item.bidChange > 0 ? '+' : '';
         let cls = item.bidChange > 0 ? 'up' : '';
-        const tdxLink = `http://www.treeid/code_${item.code}`;
         html += `
-        <div class="stock-card" onclick="window.open('${tdxLink}')">
+        <div class="stock-card">
             <div class="card-rank">${medals[idx]}</div>
             <div class="stock-name">${item.name}</div>
             <div class="stock-code">${item.code}</div>
@@ -883,25 +874,6 @@ function isEligibleBot(stock){
     if(bid>=9.5) return false;
     return true;
 }
-function linkToSoftware(code){
-    if(linkMode==='tdx'){
-        let m = code.startsWith('6')?'1':((code.startsWith('4')||code.startsWith('8'))?'2':'0');
-        window.location.href=`http://www.treeid/AddToBlock_${m}#${code}`;
-        showToast(`联动通达信 ${code}`,'success');
-    }else{
-        const iframe = document.createElement('iframe');
-        iframe.style.display='none';
-        iframe.src=`dzh://VIEWSTOCK?PAGE=技术分析&LABEL=${code}`;
-        document.body.appendChild(iframe);
-        setTimeout(()=>iframe.remove(),1000);
-    }
-}
-function switchLinkMode(){
-    linkMode = linkMode==='tdx'?'dzh':'tdx';
-    const btn = document.getElementById('switchLinkBtn');
-    btn.innerHTML = linkMode==='tdx'?`<i class="fa fa-exchange"></i> 联动：通达信`:`<i class="fa fa-exchange"></i> 联动：大智慧`;
-    showToast(`切换联动模式：${linkMode}`);
-}
 function renderTable(){
     const wrap = document.getElementById('top10TableArea');
     const list = cachedTopList.slice(0,showCount);
@@ -920,7 +892,7 @@ function renderTable(){
         const s2 = item.realChange>0?'+':'';
         html += `<tr>
         <td class="rank-col">${idx+1}</td>
-        <td class="code-click" onclick="linkToSoftware('${item.code}')">${item.code}</td>
+        <td>${item.code}</td>
         <td>${item.name}</td>
         <td class="${bcls}">${s1}${item.bidChange.toFixed(2)}%</td>
         <td class="${rcls}">${s2}${item.realChange.toFixed(2)}%</td>
@@ -1027,7 +999,6 @@ window.addEventListener('DOMContentLoaded',async ()=>{
     // 右侧按钮
     document.getElementById('refreshLockedBtnBot').onclick = reLockBot;
     document.getElementById('refreshRealTimeBtn').onclick = refreshRealTimeBot;
-    document.getElementById('switchLinkBtn').onclick = switchLinkMode;
     document.getElementById('showCountSelect').onchange = changeShowCount;
 
     updateAllTime();
