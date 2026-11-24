@@ -267,6 +267,18 @@ connect-src 'self' https://push2dycalc.eastmoney.com;
             border-top: 1px solid rgba(255,255,255,0.05);
             padding-top: 20px;
         }
+        .lock-line {
+            font-size: 12px;
+            color: #8f9ab5;
+            padding: 10px 4px 0;
+            letter-spacing: 0.5px;
+        }
+        .lock-line b {
+            color: #ffb46b;
+        }
+        .lock-line b.lock-ok {
+            color: #6fdc9a;
+        }
         .toast-msg {
             position: fixed;
             bottom: 30px;
@@ -536,6 +548,7 @@ connect-src 'self' https://push2dycalc.eastmoney.com;
                         </div>
                     </div>
                 </div>
+                <div id="lockLineTop" class="lock-line"></div>
                 <div id="top3CardsArea" class="top3-container">
                     <div class="loading-placeholder">
                         <div class="spinner"></div>
@@ -578,6 +591,7 @@ connect-src 'self' https://push2dycalc.eastmoney.com;
                         </div>
                     </div>
                 </div>
+                <div id="lockLineBot" class="lock-line"></div>
                 <div id="top10TableArea" class="stock-table-container">
                     <div class="loading-placeholder">
                         <div class="spinner"></div>
@@ -602,6 +616,10 @@ let isDataCachedBot = false;
 let linkMode = 'tdx';
 let showCount = 5;
 
+// 当日快照锁：只在 localStorage 里留「今天」这一条，换天自动失效
+const LOCK_KEY = 'auction_lock_v1';
+let lockInfo = null;
+
 // ========== 通用工具函数 ==========
 function getBidChange(stock) {
     return stock.f615 !== undefined ? stock.f615 : (stock.f3 || 0);
@@ -618,6 +636,81 @@ function isBefore930() {
     const hours = beijingTime.getHours();
     const minutes = beijingTime.getMinutes();
     return hours < 9 || (hours === 9 && minutes < 30);
+}
+
+// ========== 当日快照锁 ==========
+// 目的：9:25 抓到的这一版，当天再怎么刷新都不变。
+// q=1 表示在 9:25:30–9:29:59 抓的（真竞价快照）；q=0 表示其它时段抓的。
+function lockRead() {
+    try {
+        const raw = localStorage.getItem(LOCK_KEY);
+        if (!raw) return null;
+        const o = JSON.parse(raw);
+        if (!o || o.date !== dateKey(bjNow())) return null;   // 只认当天
+        return o;
+    } catch (e) {
+        return null;
+    }
+}
+function lockWrite(rec) {
+    try { localStorage.setItem(LOCK_KEY, JSON.stringify(rec)); } catch (e) { /* 配额满等情况忽略 */ }
+    lockInfo = rec;
+}
+function lockClear() {
+    try { localStorage.removeItem(LOCK_KEY); } catch (e) { /* 忽略 */ }
+    lockInfo = null;
+}
+// 左右两个面板分别落盘，避免并发请求时互相覆盖
+function lockPart(part, data) {
+    const cur = lockRead() || {
+        date: dateKey(bjNow()),
+        t: clockStr(bjNow()),
+        q: inSnapWindow(bjNow()) ? 1 : 0,
+    };
+    cur[part] = data;
+    lockWrite(cur);
+}
+// 9:25 之前不锁（竞价还没定），周末不锁
+function canLockNow() {
+    const d = bjNow();
+    if (!isWeekday(d)) return false;
+    return d.getHours() * 60 + d.getMinutes() >= 9 * 60 + 25;
+}
+function updateLockBadge() {
+    const lock = lockRead();
+    let txt;
+    if (!lock) {
+        txt = '<b>未锁定</b>　交易日 9:25:30 后自动锁定；现在刷新会重新抓取';
+    } else if (lock.q === 1) {
+        txt = `<b class="lock-ok">已锁定 ${lock.t} 竞价快照</b>　刷新不再变化`;
+    } else {
+        txt = `<b>已锁定 ${lock.t} 抓取的数据</b>　非竞价时段抓取，刷新不再变化`;
+    }
+    const a = document.getElementById('lockLineTop');
+    const b = document.getElementById('lockLineBot');
+    if (a) a.innerHTML = txt;
+    if (b) b.innerHTML = txt;
+}
+// 9:25:30 到点自动抓一次并锁定（页面开着不用管）
+function scheduleAuctionLock() {
+    if (lockRead()) return;
+    const d = bjNow();
+    if (!isWeekday(d)) return;
+    const target = new Date(d);
+    target.setHours(9, 25, 30, 0);
+    const ms = target.getTime() - d.getTime();
+    if (ms <= 0) return;                                  // 已经过了 9:25:30
+    setTimeout(async () => {
+        if (lockRead() || lockInfo) return;
+        await Promise.all([fetchTopPanel(true), fetchBotPanel(true)]);
+        showToast('✅ 已锁定 9:25 竞价快照，刷新不再变化', 'success');
+    }, ms);
+}
+// 手动重锁：清掉当天的锁，两个面板一起重抓
+async function relockAll() {
+    lockClear();
+    isDataCachedBot = false;
+    await Promise.all([fetchTopPanel(true), fetchBotPanel(true)]);
 }
 function showToast(msg, type='info'){
     document.querySelector('.toast-msg')?.remove();
@@ -714,8 +807,19 @@ function renderTop3(top3List) {
     });
     container.innerHTML = html;
 }
-async function fetchTopPanel(){
+async function fetchTopPanel(force){
     const wrap = document.getElementById('top3CardsArea');
+    if (!force) {
+        const lock = lockRead();
+        if (lock && Array.isArray(lock.top3)) {
+            cachedTop3 = lock.top3;
+            isDataLockedTop = true;
+            lockInfo = lock;
+            renderTop3(cachedTop3);
+            updateLockBadge();
+            return;
+        }
+    }
     wrap.innerHTML = `<div class="loading-placeholder"><div class="spinner"></div><div>正在获取竞价快照...</div></div>`;
     try{
         const res = await fetch(STOCK_API);
@@ -734,7 +838,9 @@ async function fetchTopPanel(){
         list.sort((a,b)=>b.probability-a.probability);
         cachedTop3 = list.slice(0,3);
         isDataLockedTop = true;
+        if (canLockNow()) lockPart('top3', cachedTop3);
         renderTop3(cachedTop3);
+        updateLockBadge();
         showToast(`✅ 左侧面板数据加载完成`,'success');
     }catch(e){
         wrap.innerHTML = `<div class="empty-state">获取失败 <br><button onclick="fetchTopPanel()" class="tdx-export-btn">重试</button></div>`;
@@ -841,9 +947,20 @@ function renderTable(){
     html += `</tbody></table>`;
     wrap.innerHTML = html;
 }
-async function fetchBotPanel(){
+async function fetchBotPanel(force){
     const wrap = document.getElementById('top10TableArea');
-    if(isDataCachedBot){ renderTable();return; }
+    if (!force) {
+        const lock = lockRead();
+        if (lock && Array.isArray(lock.list)) {
+            cachedTopList = lock.list;
+            isDataCachedBot = true;
+            lockInfo = lock;
+            renderTable();
+            updateLockBadge();
+            return;
+        }
+    }
+    if(isDataCachedBot && !force){ renderTable();return; }
     wrap.innerHTML = `<div class="loading-placeholder"><div class="spinner"></div><div>选股加载中...</div></div>`;
     try{
         const res = await fetch(STOCK_API);
@@ -868,7 +985,9 @@ async function fetchBotPanel(){
         arr.sort((a,b)=>b.probability-a.probability);
         cachedTopList = arr;
         isDataCachedBot = true;
+        if (canLockNow()) lockPart('list', arr.map(({raw, ...rest}) => rest));
         renderTable();
+        updateLockBadge();
         showToast("✅右侧选股缓存完成",'success');
     }catch(e){
         wrap.innerHTML = `<div class="empty-state">获取失败<br><button onclick="fetchBotPanel()" class="tdx-export-btn">重试</button></div>`;
@@ -898,8 +1017,7 @@ function reLockBot(){
         showToast("❌9:30后禁止重新选股",'error');
         return;
     }
-    isDataCachedBot = false;
-    fetchBotPanel();
+    relockAll();
 }
 function exportBotTdx(){
     const list = cachedTopList.slice(0,showCount);
@@ -925,7 +1043,10 @@ window.addEventListener('DOMContentLoaded',async ()=>{
 
     // 左侧按钮
     document.getElementById('exportTop3Btn').onclick = exportTop3ToTdx;
-    document.getElementById('refreshLockedBtn').onclick = fetchTopPanel;
+    document.getElementById('refreshLockedBtn').onclick = () => {
+        if (!confirm('重新锁定会清空当天的快照锁，并按现在的行情重新抓取。继续？')) return;
+        relockAll();
+    };
 
     // 右侧按钮
     document.getElementById('exportTop10Btn').onclick = exportBotTdx;
@@ -936,6 +1057,9 @@ window.addEventListener('DOMContentLoaded',async ()=>{
 
     updateAllTime();
     setInterval(updateAllTime,1000);
+
+    updateLockBadge();
+    scheduleAuctionLock();
 });
 
 // ===================== 数据记录 / 每日复盘（附加模块） =====================
